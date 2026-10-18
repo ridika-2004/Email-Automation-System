@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+pymysql
+cryptography
+pandas
+openpyxl
+python-multipart
+python-dotenv
+aiosmtpd
