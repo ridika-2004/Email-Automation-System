@@ -79,6 +79,11 @@ uvicorn app.main:app --reload --port 8000
 ```
 API docs: **http://localhost:8000/docs**
 
+Before the first start, add a sign-in secret to `backend\.env` (see `.env.example`):
+```
+JWT_SECRET=<output of: python -c "import secrets; print(secrets.token_urlsafe(48))">
+```
+
 After it starts, refresh MySQL Workbench (Schemas panel) to see the `npsb_dispute` database.
 
 ### Step 4 – terminal 3: frontend
@@ -89,12 +94,27 @@ npm run dev
 ```
 Open **http://localhost:5173**
 
+### Signing in
+- There are no roles: every user can use every feature, including **Users & Security**.
+- Only real email addresses work. The domain must be able to receive mail, throwaway inboxes
+  are refused, and a **6-digit code** is emailed to the address. The account can't sign in
+  until the code is entered. Changing your email also needs a code sent to the new address.
+- Afterwards, set `ALLOW_REGISTRATION=false` in `.env` so only signed-in users can add accounts
+  (**Users & Security** tab). New users confirm their email with a code on first sign-in.
+- Sign in with username or email. "Keep me signed in" keeps the session for 30 days.
+- 5 wrong passwords lock the account for 15 minutes (any other user can unlock it).
+- **Forgot password?** emails a one-time reset link (valid 30 minutes) through the SMTP server in `.env`.
+  With the test mail server, open the saved email in `backend\sent_emails\` and click the link.
+- **My account**: edit your profile, change your password, see and sign out your devices,
+  and review recent security activity.
+
 ### Common problems
 | Error | Fix |
 |---|---|
 | `Access denied for user 'root'@'localhost'` | wrong `DB_PASSWORD` in `.env` |
 | `Can't connect to MySQL server on 'localhost'` | MySQL service isn't running. Open *Services* (Win+R → `services.msc`) and start **MySQL80** |
 | Emails show **FAILED** with `Connection refused` | the test mail server (terminal 1) isn't running |
+| Sign-in page says **Method Not Allowed** / **Not Found**, or *Cannot reach the server* | port 8000 is not this backend (or nothing is running there). Stop whatever else uses port 8000, then start the backend (step 3) |
 | `'venv\Scripts\activate' is not recognized` in PowerShell | run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use Command Prompt |
 
 ## 3. Demo script (≈ 3 minutes)
