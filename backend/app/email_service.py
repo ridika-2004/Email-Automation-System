@@ -1,5 +1,6 @@
 import smtplib
 import time
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 from html import escape
 
@@ -68,10 +69,31 @@ def build_email(partner_name: str, transactions: list) -> tuple[str, str]:
     return subject, body
 
 
-def send_email(to: list[str], cc: list[str], subject: str, html_body: str) -> int:
-    """Send one email and return how many attempts it took.
+@dataclass
+class SendResult:
+    attempts: int
+    refused: dict[str, str] = field(default_factory=dict)  # address -> reason, for recipients the server refused
 
-    Retries on temporary errors (e.g. server down); raises RuntimeError on final failure.
+
+class RecipientsRefused(RuntimeError):
+    """The server refused every recipient (permanent: not retried)."""
+
+    def __init__(self, refused: dict[str, str]):
+        super().__init__("Recipient refused: " + "; ".join(f"{a} ({r})" for a, r in refused.items()))
+        self.refused = refused
+
+
+def _reason(code, text) -> str:
+    text = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
+    return f"{code} {text}".strip()[:250]
+
+
+def send_email(to: list[str], cc: list[str], subject: str, html_body: str) -> SendResult:
+    """Send one email. The server may accept some recipients and refuse others: those are in
+    SendResult.refused instead of being dropped silently.
+
+    Retries on temporary errors (e.g. server down); raises RecipientsRefused when every
+    recipient is refused and RuntimeError on any other final failure.
     """
     msg = EmailMessage()
     msg["From"] = config.MAIL_FROM
@@ -91,10 +113,10 @@ def send_email(to: list[str], cc: list[str], subject: str, html_body: str) -> in
                     smtp.starttls()
                 if config.SMTP_USER:
                     smtp.login(config.SMTP_USER, config.SMTP_PASSWORD)
-                smtp.send_message(msg)
-            return attempt
-        except smtplib.SMTPRecipientsRefused as exc:
-            raise RuntimeError(f"Recipient refused: {exc.recipients}")  # permanent, no retry
+                refused = smtp.send_message(msg)  # {address: (code, message)} for refused recipients
+            return SendResult(attempt, {addr: _reason(*answer) for addr, answer in refused.items()})
+        except smtplib.SMTPRecipientsRefused as exc:  # permanent, no retry
+            raise RecipientsRefused({addr: _reason(*answer) for addr, answer in exc.recipients.items()})
         except Exception as exc:  # connection problems etc. -> try again
             last_error = exc
             if attempt < config.SMTP_MAX_ATTEMPTS:

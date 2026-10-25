@@ -8,3 +8,4 @@ openpyxl
 python-multipart
 python-dotenv
 aiosmtpd
+pyjwt

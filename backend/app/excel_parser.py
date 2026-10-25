@@ -22,6 +22,48 @@ REQUIRED_COLUMNS = {
 }
 
 
+# Header text used in the downloadable template (normalizes to the keys above)
+TEMPLATE_HEADERS = {
+    "txn_datetime": "Txn Datetime",
+    "rrn": "RRN",
+    "stan": "STAN",
+    "amount": "Amount",
+    "source_account": "Source Account",
+    "beneficiary_account": "Beneficiary Account",
+    "txn_type": "Txn Type",
+    "response_code": "Response Code",
+    "nagad_status": "Nagad Status",
+    "dest_institution_code": "Dest Institution Code",
+    "dest_partner_name": "Dest Partner Name",
+}
+
+TEMPLATE_EXAMPLE_ROWS = [
+    ["2026-10-17 09:15:00", "629017123456", "123456", 1500, "01712345678", "01898765432",
+     "Fund Transfer (P2P)", "68", "PENDING", "0101", "ABC Wallet"],
+    ["2026-10-17 10:42:30", "629017654321", "654321", 25000, "01612345678", "1234567890123",
+     "Send Money to Bank", "91", "PENDING", "0201", "XYZ Bank"],
+]
+
+
+def build_template() -> bytes:
+    """Sample .xlsx with the required headers and two example rows."""
+    df = pd.DataFrame(TEMPLATE_EXAMPLE_ROWS, columns=[TEMPLATE_HEADERS[c] for c in REQUIRED_COLUMNS])
+    return to_xlsx(df)
+
+
+def to_xlsx(df: pd.DataFrame, sheet_name: str = "Transactions") -> bytes:
+    """DataFrame -> .xlsx bytes with sized columns and a frozen header row."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        sheet = writer.sheets[sheet_name]
+        for column in sheet.columns:
+            width = max(len(str(cell.value or "")) for cell in column) + 2
+            sheet.column_dimensions[column[0].column_letter].width = min(width, 80)
+        sheet.freeze_panes = "A2"
+    return buffer.getvalue()
+
+
 class FileValidationError(Exception):
     """Raised when the file as a whole can not be accepted."""
 
@@ -35,8 +77,8 @@ def _normalize_header(name) -> str:
     return str(name).strip().lower().replace(" ", "_")
 
 
-def read_file(filename: str, content: bytes) -> pd.DataFrame:
-    """Load the file into a DataFrame where every cell is a string."""
+def read_raw_file(filename: str, content: bytes) -> pd.DataFrame:
+    """Load the file into a DataFrame where every cell is a string (headers as in the file)."""
     name = filename.lower()
     try:
         if name.endswith(".csv"):
@@ -49,7 +91,12 @@ def read_file(filename: str, content: bytes) -> pd.DataFrame:
         raise
     except Exception as exc:
         raise FileValidationError([f"Could not read the file: {exc}"])
+    return df
 
+
+def read_file(filename: str, content: bytes) -> pd.DataFrame:
+    """Same as read_raw_file, with headers normalized ('Response Code' -> 'response_code')."""
+    df = read_raw_file(filename, content)
     df.columns = [_normalize_header(c) for c in df.columns]
     return df
 
@@ -121,3 +168,18 @@ def parse_transactions(filename: str, content: bytes):
         })
 
     return len(df), valid_rows, row_errors
+
+
+def split_rows(filename: str, content: bytes) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Returns (valid, faulty) rows of the file, with the file's own columns and values.
+
+    faulty also gets an "Excel Row" column (first) with the row number in the original file.
+    """
+    _, _, row_errors = parse_transactions(filename, content)
+    df = read_raw_file(filename, content)
+    faulty_index = [r["row"] - 2 for r in row_errors]  # Excel row -> DataFrame index
+
+    valid = df.drop(index=faulty_index)
+    faulty = df.loc[faulty_index].copy()
+    faulty.insert(0, "Excel Row", [i + 2 for i in faulty.index])
+    return valid, faulty
