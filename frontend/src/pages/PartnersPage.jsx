@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, formatDateTime } from "../api";
 
 const EMPTY_FORM = { institution_code: "", name: "", is_active: true, emails: [{ email: "", is_active: true }] };
 
@@ -25,7 +25,9 @@ export default function PartnersPage() {
       institution_code: p.institution_code,
       name: p.name,
       is_active: p.is_active,
-      emails: p.emails.length ? p.emails.map(({ email, is_active }) => ({ email, is_active })) : [{ email: "", is_active: true }],
+      emails: p.emails.length
+        ? p.emails.map(({ email, is_active, problem, problem_at }) => ({ email, is_active, problem, problem_at, clear_problem: false }))
+        : [{ email: "", is_active: true }],
     });
     setError("");
   }
@@ -62,7 +64,10 @@ export default function PartnersPage() {
         <div className="row-between">
           <div>
             <h2>Partners</h2>
-            <p className="muted small">Only active partners with at least one active email address receive emails.</p>
+            <p className="muted small">
+              Only active partners with at least one active email address receive emails. Addresses marked
+              Refused were rejected by the mail server and are left out until you fix or clear them.
+            </p>
           </div>
           <button className="btn primary" onClick={openNew}>+ Add partner</button>
         </div>
@@ -82,7 +87,7 @@ export default function PartnersPage() {
                   {p.emails.length === 0 && <span className="text-red small">No email configured</span>}
                   {p.emails.map((e) => (
                     <div key={e.id} className={e.is_active ? "small" : "small inactive-email"}>
-                      {e.email} {!e.is_active && "(inactive)"}
+                      {e.email} {!e.is_active && "(inactive)"} <ProblemBadge email={e} />
                     </div>
                   ))}
                 </td>
@@ -122,15 +127,24 @@ export default function PartnersPage() {
               <div className="label">Recipient emails</div>
               {form.emails.map((em, i) => (
                 <div key={i} className="email-row">
-                  <input type="email" placeholder="name@partner.com" value={em.email} onChange={(e) => setEmail(i, { email: e.target.value })} />
+                  <input type="email" placeholder="name@partner.com" value={em.email}
+                    onChange={(e) => setEmail(i, { email: e.target.value, problem: null, clear_problem: true })} />
                   <label className="checkbox">
                     <input type="checkbox" checked={em.is_active} onChange={(e) => setEmail(i, { is_active: e.target.checked })} />
                     Active
                   </label>
                   <button type="button" className="btn small" onClick={() => removeEmail(i)}>Remove</button>
+                  {em.problem && !em.clear_problem && (
+                    <>
+                      <ProblemBadge email={em} />
+                      <button type="button" className="btn small" title="Use this address again (e.g. the mailbox was fixed)"
+                        onClick={() => setEmail(i, { clear_problem: true })}>Clear</button>
+                    </>
+                  )}
                 </div>
               ))}
               <button type="button" className="btn small" onClick={addEmail}>+ Add email</button>
+              <p className="muted small">New addresses are checked: the domain must exist and accept mail.</p>
             </div>
 
             {error && <div className="alert error">{error}</div>}
@@ -144,4 +158,10 @@ export default function PartnersPage() {
       )}
     </div>
   );
+}
+
+// "Refused" for an address the mail server rejected
+function ProblemBadge({ email }) {
+  if (!email.problem) return null;
+  return <span className="badge red" title={`${email.problem} (${formatDateTime(email.problem_at)})`}>Refused</span>;
 }

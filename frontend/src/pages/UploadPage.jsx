@@ -29,13 +29,34 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
     }
   }
 
+  async function handleDownloadTemplate() {
+    setError(null);
+    try {
+      await api.downloadTemplate();
+    } catch (err) {
+      setError({ message: err.message });
+    }
+  }
+
+  async function handleDownloadRows(kind) {
+    setError(null);
+    const base = result.filename.replace(/\.(xlsx|csv)$/i, "");
+    const suffix = kind === "valid" ? "successful" : "skipped";
+    try {
+      await api.downloadRows(result.upload_id, kind, `${base}_${suffix}.xlsx`);
+    } catch (err) {
+      setError({ message: err.message });
+    }
+  }
+
   return (
     <div className="page">
       <section className="card">
         <h2>Upload dispute transactions file</h2>
         <p className="muted">
-          Accepted formats: <b>.xlsx</b> or <b>.csv</b>. Required columns:
+          Accepted formats: <b>.xlsx</b> or <b>.csv</b>.
         </p>
+        <p className="muted">Required columns:</p>
         <div className="chips">
           {REQUIRED_COLUMNS.map((c) => <span key={c} className="chip">{c}</span>)}
         </div>
@@ -44,6 +65,12 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
             Response codes treated as <b>unknown</b>: {config.unknown_response_codes.join(", ")}
           </p>
         )}
+
+        <div className="template-download">
+          <button type="button" className="btn" onClick={handleDownloadTemplate}>
+            Download sample template (.xlsx)
+          </button>
+        </div>
 
         <form onSubmit={handleUpload} className="upload-form">
           <input
@@ -73,7 +100,14 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
             <Stat label="Rows in file" value={result.total_rows} />
             <Stat label="Valid rows" value={result.valid_rows} />
             <Stat label="Unknown response" value={result.unknown_rows} highlight />
-            <Stat label="Skipped (errors)" value={result.skipped_rows ?? 0} danger={result.skipped_rows > 0} />
+            <div className="stat-with-action">
+              <Stat label="Skipped (errors)" value={result.skipped_rows ?? 0} danger={result.skipped_rows > 0} />
+              {result.skipped_rows > 0 && (
+                <button type="button" className="btn grey" onClick={() => handleDownloadRows("faulty")}>
+                  Download skipped transactions
+                </button>
+              )}
+            </div>
           </div>
 
           {result.row_errors?.length > 0 && (
