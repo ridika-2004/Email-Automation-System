@@ -117,6 +117,10 @@ function readableMessage(detail) {
   return detail.message;
 }
 
+// { a: 1, b: "" } -> "a=1" (empty filters are left out)
+const queryString = (filters) =>
+  new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "" && v != null)).toString();
+
 const json = (method, body) => ({
   method,
   headers: { "Content-Type": "application/json" },
@@ -158,6 +162,11 @@ export const api = {
 
   // ---- app
   getConfig: () => request("/api/config"),
+  // Email Configuration page (admins change it)
+  emailSettings: () => request("/api/email-settings"),
+  saveEmailSettings: (values) => request("/api/email-settings", json("PUT", values)),
+  runFollowupsNow: () => request("/api/email-settings/run-followups", { method: "POST" }),
+  sendTestEmail: (to) => request("/api/email-settings/test-email", json("POST", { to })),
 
   uploadFile: (file) => {
     const form = new FormData();
@@ -180,13 +189,20 @@ export const api = {
   // users: drafts -> pending (waits for an admin)
   submitEmails: (uploadId) => request(`/api/uploads/${uploadId}/submit`, { method: "POST" }),
   pendingEmails: () => request("/api/pending-emails"),
-  // filters: { q, partner_id, sort: "newest" | "oldest" }
-  sentEmails: (filters = {}) => {
-    const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "" && v != null));
-    return request(`/api/sent-emails?${params}`);
-  },
+  // filters: { q, partner_id, date_from, date_to, sort: "newest" | "oldest", reply: status | "due" }
+  sentEmails: (filters = {}) => request(`/api/sent-emails?${queryString(filters)}`),
+  // counts per reply status for the same filters (without sort / reply)
+  sentSummary: (filters = {}) => request(`/api/sent-emails/summary?${queryString(filters)}`),
+  emailEvents: (id) => request(`/api/emails/${id}/events`),
   // admins only: send the ticked pending emails
   sendSelected: (ids) => request("/api/pending-emails/send", json("POST", { ids })),
+  // admins only: follow-up of sent emails
+  setReplyStatus: (id, status, note = "") => request(`/api/emails/${id}/reply-status`, json("PUT", { status, note })),
+  addEmailNote: (id, note) => request(`/api/emails/${id}/notes`, json("POST", { note })),
+  downloadAttachment: (id, filename) => download(`/api/emails/${id}/attachment`, filename),
+  setRemarks: (id, remarks) => request(`/api/emails/${id}/remarks`, json("PUT", { remarks })),
+  followupDraft: (id) => request(`/api/emails/${id}/followup-draft`),
+  sendFollowup: (id, followup) => request(`/api/emails/${id}/followups`, json("POST", followup)),
 };
 
 export const formatAmount = (n) =>

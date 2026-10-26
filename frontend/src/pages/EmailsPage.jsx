@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatAmount } from "../api";
+import MailTypeBadge from "../components/MailTypeBadge";
 import Modal from "../components/Modal";
+import { Alert, badge, btnCls, card, cx, h2, link, num, page, rowCls, table } from "../components/ui";
 
 // Users prepare and edit the emails here. Their "Send" puts them in Pending Mails, where an admin sends them.
 export default function EmailsPage({ uploadId, config, onOpenPending }) {
@@ -62,22 +64,22 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
   const draftCount = emails.filter(isDraft).length;
 
   return (
-    <div className="page">
-      <section className="card">
-        <div className="row-between">
+    <div className={page}>
+      <section className={card}>
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <h2>Prepared emails ({emails.length})</h2>
-            <p className="muted small">
-              One consolidated email per partner. Check and edit them, then press Send:
+            <h2 className={h2}>Prepared emails ({emails.length})</h2>
+            <p className="text-xs text-muted">
+              One email per partner and mail type, with its transactions attached as an Excel file. Check and edit them, then press Send:
               they go to <b>Pending Mails</b> and an admin sends them to the partners.
             </p>
           </div>
-          <div className="actions">
-            <button className="btn" onClick={prepare} disabled={!!busy}>
+          <div className="flex gap-2">
+            <button className={btnCls()} onClick={prepare} disabled={!!busy}>
               {busy === "preparing" ? "Refreshing..." : "Refresh previews"}
             </button>
             <button
-              className="btn primary"
+              className={btnCls("primary")}
               onClick={send}
               disabled={!!busy || draftCount === 0 || hasUnsavedEdits}
               title={hasUnsavedEdits ? "Save or discard your edits first" : "Sends them to an admin for approval"}
@@ -89,53 +91,54 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
           </div>
         </div>
 
-        {message && <div className={`alert ${message.type}`}>{message.text}</div>}
+        {message && <Alert type={message.type}>{message.text}</Alert>}
 
         {warnings.length > 0 && (
-          <div className="alert error">
+          <Alert type="error">
             <b>No email was prepared for these partners:</b>
             <ul>{warnings.map((w) => <li key={w}>{w}</li>)}</ul>
-            <span className="small">Fix them in Partner Configuration, then click “Refresh previews”.</span>
-          </div>
+            <span className="text-xs">Fix them in Partner Configuration, then click “Refresh previews”.</span>
+          </Alert>
         )}
 
         {notices.length > 0 && (
-          <div className="alert warning">
+          <Alert type="warning">
             <b>These addresses were left out because the mail server refused them before:</b>
             <ul>{notices.map((n) => <li key={n}>{n}</li>)}</ul>
-            <span className="small">Correct or clear them in Partner Configuration, then click “Refresh previews”.</span>
-          </div>
+            <span className="text-xs">Correct or clear them in Partner Configuration, then click “Refresh previews”.</span>
+          </Alert>
         )}
 
-        <table className="table">
+        <table className={table}>
           <thead>
             <tr>
-              <th>Partner</th><th>To</th><th className="num">Txns</th>
-              <th className="num">Amount (BDT)</th><th>Status</th><th>Details</th>
+              <th>Partner</th><th>Mail Type</th><th>To</th><th className={num}>Txns</th>
+              <th className={num}>Amount (BDT)</th><th>Status</th><th>Details</th>
             </tr>
           </thead>
           <tbody>
             {emails.map((e) => (
               <tr
                 key={e.id}
-                className={`clickable ${e.id === selectedId ? "selected" : ""}`}
+                className={rowCls(e.id === selectedId)}
                 onClick={() => selectEmail(e.id)}
               >
-                <td><b>{e.partner_name}</b> <span className="muted">({e.institution_code})</span></td>
-                <td className="small">{e.to.join(", ")}</td>
-                <td className="num">{e.txn_count}</td>
-                <td className="num">{formatAmount(e.total_amount)}</td>
+                <td><b>{e.partner_name}</b></td>
+                <td><MailTypeBadge type={e.mail_type} /></td>
+                <td className="text-xs">{e.to.join(", ")}</td>
+                <td className={num}>{e.txn_count}</td>
+                <td className={num}>{formatAmount(e.total_amount)}</td>
                 <td>
                   <StatusBadge status={e.status} />{" "}
-                  {e.is_edited && e.status !== "SENT" && <span className="badge gray">EDITED</span>}
+                  {e.is_edited && e.status !== "SENT" && <span className={badge("gray")}>EDITED</span>}
                 </td>
-                <td className="small">
+                <td className="text-xs">
                   {e.status === "PENDING" && `Waiting for an admin (sent for approval by ${e.submitted_by_name})`}
                   {e.status === "SENDING" && `Being sent by ${e.sent_by_name}`}
                   {e.status === "SENT" && `Sent ${new Date(e.sent_at).toLocaleString()}${e.sent_by_name ? ` by ${e.sent_by_name}` : ""}`}
-                  {e.status === "FAILED" && <div className="text-red">{e.error}</div>}
+                  {e.status === "FAILED" && <div className="text-red-700">{e.error}</div>}
                   {e.delivery_issues.map((i) => (
-                    <div key={i.email} className="text-red" title={i.reason}>Refused: {i.email}</div>
+                    <div key={i.email} className="text-red-700" title={i.reason}>Refused: {i.email}</div>
                   ))}
                 </td>
               </tr>
@@ -161,8 +164,8 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
           title="Sent for approval"
           onClose={() => setSubmitted(0)}
           actions={<>
-            <button className="btn" onClick={() => setSubmitted(0)}>OK</button>
-            <button className="btn primary" onClick={() => { setSubmitted(0); onOpenPending(); }}>View Pending Mails</button>
+            <button className={btnCls()} onClick={() => setSubmitted(0)}>OK</button>
+            <button className={btnCls("primary")} onClick={() => { setSubmitted(0); onOpenPending(); }}>View Pending Mails</button>
           </>}
         >
           <p><b>{submitted} email(s) are now pending.</b></p>
@@ -176,9 +179,13 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
 // Drafts: what the Send button sends for approval. PENDING / SENT / FAILED ones are with an admin or done.
 const isDraft = (e) => e.status === "PREPARED";
 
+// Preview / Edit switch button
+const toggleBtn = (active) => cx("px-3.5 py-1.5 text-[13px] disabled:cursor-not-allowed disabled:opacity-50",
+  active ? "bg-brand text-white" : "bg-white hover:enabled:bg-gray-50");
+
 export function StatusBadge({ status }) {
   const color = { SENT: "green", FAILED: "red", PREPARED: "blue", PENDING: "amber", SENDING: "blue" }[status] || "gray";
-  return <span className={`badge ${color}`}>{status}</span>;
+  return <span className={badge(color)}>{status}</span>;
 }
 
 // Preview card with an Edit / Preview toggle. Edits stay a local draft
@@ -221,6 +228,14 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
     });
   }
 
+  async function downloadAttachment() {
+    try {
+      await api.downloadAttachment(email.id, `${email.partner_name} - ${email.mail_type_label}.xlsx`.replace(/[^\w.\- ]/g, "_"));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   async function save() {
     setSaving(true);
     setError("");
@@ -253,18 +268,18 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
   }
 
   return (
-    <section className="card">
-      <div className="row-between">
-        <h2>
-          Email {mode === "edit" ? "editor" : "preview"} — {email.partner_name}
-          {dirty && <span className="muted small"> (unsaved changes)</span>}
+    <section className={card}>
+      <div className="flex items-start justify-between gap-3">
+        <h2 className={h2}>
+          Email {mode === "edit" ? "editor" : "preview"} — {email.partner_name} <MailTypeBadge type={email.mail_type} className="ml-1.5 !text-xs" />
+          {dirty && <span className="text-xs text-muted"> (unsaved changes)</span>}
         </h2>
-        <div className="actions">
+        <div className="flex gap-2">
           {(mode === "edit" || dirty) && (
             <>
-              <button className="btn small" onClick={discard} disabled={saving}>Discard</button>
+              <button className={btnCls("default", "sm")} onClick={discard} disabled={saving}>Discard</button>
               <button
-                className="btn small primary"
+                className={btnCls("primary", "sm")}
                 onClick={save}
                 disabled={!dirty || saving || locked}
                 title={dirty ? "" : "No changes to save yet"}
@@ -274,16 +289,16 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
             </>
           )}
           {!dirty && email.is_edited && !isSent && (
-            <button className="btn small" onClick={resetToGenerated} disabled={locked}>
+            <button className={btnCls("default", "sm")} onClick={resetToGenerated} disabled={locked}>
               Reset to generated
             </button>
           )}
-          <div className="toggle">
-            <button className={mode === "preview" ? "active" : ""} onClick={() => setMode("preview")}>
+          <div className="inline-flex overflow-hidden rounded-md border border-line [&>button+button]:border-l [&>button+button]:border-line">
+            <button className={toggleBtn(mode === "preview")} onClick={() => setMode("preview")}>
               Preview
             </button>
             <button
-              className={mode === "edit" ? "active" : ""}
+              className={toggleBtn(mode === "edit")}
               onClick={openEditor}
               disabled={isSent}
               title={!isSent ? "Edit subject and body"
@@ -296,16 +311,23 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
         </div>
       </div>
 
-      {error && <div className="alert error">{error}</div>}
+      {error && <Alert type="error">{error}</Alert>}
 
-      <div className="email-meta">
+      <div className="mb-3 rounded-md border border-line [&>div:last-child]:border-b-0 [&>div>span:first-child]:inline-block [&>div>span:first-child]:w-[70px] [&>div>span:first-child]:text-muted [&>div]:border-b [&>div]:border-line [&>div]:px-3 [&>div]:py-2">
         <div><span>From</span>{config?.mail_from}</div>
         <div><span>To</span>{email.to.join(", ")}</div>
         <div><span>CC</span>{email.cc.join(", ")}</div>
         <div>
+          <span>Attached</span>
+          <button type="button" className={cx(link, "text-[13px]")} onClick={downloadAttachment} title="Download the attached Excel file">
+            📎 Transactions ({email.txn_count}).xlsx
+          </button>
+        </div>
+        <div>
           <span>Subject</span>
           {mode === "edit" ? (
             <input
+              className="w-[calc(100%-80px)] rounded border border-line px-2 py-1 focus:border-brand focus:outline-none"
               value={draft.subject}
               maxLength={300}
               onChange={(e) => setDraft({ ...draft, subject: e.target.value })}
@@ -323,7 +345,7 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
         <iframe
           key="editor"
           ref={editorRef}
-          className="email-body editing"
+          className={cx("h-[520px] w-full rounded-md border border-line bg-white", "outline outline-2 -outline-offset-1 outline-brand")}
           title="Email body editor"
           srcDoc={editorSeed}
           sandbox="allow-same-origin"
@@ -331,10 +353,10 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
         />
       ) : (
         // iframe keeps the email's own styling separate from the app
-        <iframe key="preview" className="email-body" title="Email body" srcDoc={shown.body_html} sandbox="" />
+        <iframe key="preview" className={"h-[520px] w-full rounded-md border border-line bg-white"} title="Email body" srcDoc={shown.body_html} sandbox="" />
       )}
       {mode === "edit" && (
-        <p className="muted small">Click in the email to edit. Ctrl+B / Ctrl+I / Ctrl+U for bold, italic, underline.</p>
+        <p className="text-xs text-muted">Click in the email to edit. Ctrl+B / Ctrl+I / Ctrl+U for bold, italic, underline.</p>
       )}
     </section>
   );

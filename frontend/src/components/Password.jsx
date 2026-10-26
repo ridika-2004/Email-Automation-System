@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { cx, input } from "./ui";
 
 // Same rules as password_problems() in backend/app/auth.py
 const RULES = [
@@ -37,17 +38,20 @@ export function checkPassword(password, { username = "", email = "" } = {}) {
   };
 }
 
-// Password box with Show/Hide and a Caps Lock warning
-export function PasswordInput({ value, onChange, autoComplete, autoFocus, placeholder, id }) {
+const BAR = { 1: "bg-red-600", 2: "bg-amber-500", 3: "bg-green-500", 4: "bg-green-700" };
+
+// Password box with Show/Hide and a Caps Lock warning. className: classes for the input box.
+export function PasswordInput({ value, onChange, autoComplete, autoFocus, placeholder, id, className = input }) {
   const [visible, setVisible] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const trackCaps = (e) => setCapsLock(e.getModifierState?.("CapsLock") ?? false);
 
   return (
     <>
-      <div className="password-input">
+      <div className="relative">
         <input
           id={id}
+          className={cx(className, "!pr-16")}
           type={visible ? "text" : "password"}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -58,12 +62,13 @@ export function PasswordInput({ value, onChange, autoComplete, autoFocus, placeh
           placeholder={placeholder}
           maxLength={128}
         />
-        <button type="button" className="reveal" onClick={() => setVisible((v) => !v)}
-          aria-label={visible ? "Hide password" : "Show password"}>
+        <button type="button"
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-2 py-1.5 text-xs font-semibold text-muted hover:bg-gray-100 hover:text-ink"
+          onClick={() => setVisible((v) => !v)} aria-label={visible ? "Hide password" : "Show password"}>
           {visible ? "Hide" : "Show"}
         </button>
       </div>
-      {capsLock && <small className="caps-warning">Caps Lock is on</small>}
+      {capsLock && <small className="font-normal text-amber-800">Caps Lock is on</small>}
     </>
   );
 }
@@ -71,20 +76,29 @@ export function PasswordInput({ value, onChange, autoComplete, autoFocus, placeh
 // Live strength bar + checklist
 export function PasswordStrength({ password, username, email }) {
   const s = checkPassword(password, { username, email });
+  // One checklist line: ✓ passed, ✕ problem, ○ not yet
+  const Rule = ({ state = "", children }) => (
+    <li className={cx("flex gap-1.5", state === "ok" && "text-green-700", state === "bad" && "col-span-full text-red-700")}>
+      <span className="w-3 shrink-0" aria-hidden="true">{{ ok: "✓", bad: "✕" }[state] || "○"}</span>
+      {children}
+    </li>
+  );
   return (
-    <div className="strength" aria-live="polite">
-      <div className={`strength-bar level-${s.score}`}>
-        {[1, 2, 3, 4].map((i) => <span key={i} className={i <= s.score ? "on" : ""} />)}
+    <div className="-mt-1 flex flex-col gap-2 font-normal" aria-live="polite">
+      <div className="grid grid-cols-4 gap-1">
+        {[1, 2, 3, 4].map((i) => (
+          <span key={i} className={cx("h-1.5 rounded-sm transition-colors", i <= s.score ? BAR[s.score] : "bg-line")} />
+        ))}
       </div>
-      <div className="strength-label">
+      <div className="text-xs">
         Strength: <b>{password ? LEVELS[s.score] : "—"}</b>
-        {s.score === 3 && <span className="muted"> · 12+ characters makes it strong</span>}
+        {s.score === 3 && <span className="text-muted"> · 12+ characters makes it strong</span>}
       </div>
-      <ul className="rules">
-        {RULES.map((r) => <li key={r.id} className={s.passed.includes(r.id) ? "ok" : ""}>{r.label}</li>)}
-        {s.containsName && <li className="bad">Must not contain your username</li>}
-        {s.containsEmail && <li className="bad">Must not contain your email address</li>}
-        {s.isCommon && <li className="bad">Too common — choose something else</li>}
+      <ul className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted max-[820px]:grid-cols-1">
+        {RULES.map((r) => <Rule key={r.id} state={s.passed.includes(r.id) ? "ok" : ""}>{r.label}</Rule>)}
+        {s.containsName && <Rule state="bad">Must not contain your username</Rule>}
+        {s.containsEmail && <Rule state="bad">Must not contain your email address</Rule>}
+        {s.isCommon && <Rule state="bad">Too common — choose something else</Rule>}
       </ul>
     </div>
   );

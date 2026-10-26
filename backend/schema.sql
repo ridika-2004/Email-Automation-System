@@ -95,8 +95,7 @@ CREATE TABLE auth_events (
 
 CREATE TABLE partners (
   id               INT AUTO_INCREMENT PRIMARY KEY,
-  institution_code VARCHAR(20)  NOT NULL UNIQUE,
-  name             VARCHAR(150) NOT NULL,
+  name             VARCHAR(150) NOT NULL,    -- matched to KEY_ORG_NM (case-insensitive), unique
   is_active        BOOLEAN      NOT NULL DEFAULT TRUE
 );
 
@@ -129,26 +128,27 @@ CREATE TABLE uploads (
   uploaded_at  DATETIME     NOT NULL,
   total_rows   INT NOT NULL DEFAULT 0,
   valid_rows   INT NOT NULL DEFAULT 0,
-  unknown_rows INT NOT NULL DEFAULT 0,
   file_content LONGBLOB     NULL      -- original file, for downloading valid / faulty rows
 );
 
-CREATE TABLE transactions (
-  id                    INT AUTO_INCREMENT PRIMARY KEY,
-  upload_id             INT NOT NULL,
-  excel_row             INT NOT NULL,
-  txn_datetime          DATETIME      NOT NULL,
-  rrn                   VARCHAR(30)   NOT NULL,
-  stan                  VARCHAR(20)   NOT NULL,
-  amount                DECIMAL(14,2) NOT NULL,
-  source_account        VARCHAR(40)   NOT NULL,
-  beneficiary_account   VARCHAR(40)   NOT NULL,
-  txn_type              VARCHAR(50)   NOT NULL,
-  response_code         VARCHAR(10)   NOT NULL,
-  nagad_status          VARCHAR(30)   NOT NULL,
-  dest_institution_code VARCHAR(20)   NOT NULL,
-  dest_partner_name     VARCHAR(150)  NOT NULL,
-  is_unknown            BOOLEAN       NOT NULL DEFAULT FALSE,
+CREATE TABLE transactions (   -- one valid row of the uploaded file (file column in brackets)
+  id                     INT AUTO_INCREMENT PRIMARY KEY,
+  upload_id              INT NOT NULL,
+  excel_row              INT NOT NULL,
+  rrn                    VARCHAR(30)   NOT NULL,      -- NPSB_TXN_RRN
+  approval_date          DATE          NULL,          -- APPROVAL_DATE
+  approval_datetime_text VARCHAR(40)   NULL,          -- APPROVAL_DATETIME as written in the file
+  txn_datetime           DATETIME      NOT NULL,      -- APPROVAL_DATETIME, read
+  txn_type               VARCHAR(80)   NOT NULL,      -- TXN_TYPE
+  txn_id                 VARCHAR(40)   NULL,          -- TXN_ID
+  nagad_status           VARCHAR(40)   NOT NULL,      -- FIRST_TXN_STATUS_NAME
+  amount                 DECIMAL(14,2) NOT NULL,      -- TXN_AMOUNT
+  from_account_name      VARCHAR(150)  NULL,          -- FROMAC_NAME
+  to_account_type        VARCHAR(40)   NULL,          -- TOAC_TYPE
+  stan                   VARCHAR(20)   NOT NULL,      -- ORG_TXN_STAN
+  dest_partner_name      VARCHAR(150)  NOT NULL,      -- KEY_ORG_NM (the partner)
+  dest_institution_code  VARCHAR(20)   NOT NULL,      -- NPSB_ORG_CODE
+  mail_type              VARCHAR(20)   NULL,          -- TXN_DIRECTION: inward / outward
   FOREIGN KEY (upload_id) REFERENCES uploads(id)
 );
 
@@ -172,7 +172,42 @@ CREATE TABLE email_dispatches (
   submitted_at DATETIME NULL,
   sent_by      VARCHAR(30) NULL,                          -- admin who sent it
   sending_since DATETIME NULL,                            -- claimed by an admin (no double sending)
-  UNIQUE (upload_id, partner_id),   -- one email per partner per upload, never duplicated
+  message_id   VARCHAR(255) NULL,                         -- follow-ups reply in the same thread
+  reply_status VARCHAR(20) NOT NULL DEFAULT 'not_received', -- not_received / received / reconciled
+  reply_status_by VARCHAR(30) NULL,
+  reply_status_at DATETIME NULL,
+  followup_count INT NOT NULL DEFAULT 0,
+  last_followup_at DATETIME NULL,
+  remarks      TEXT NULL,                                 -- free text from an admin
+  remarks_by   VARCHAR(30) NULL,
+  remarks_at   DATETIME NULL,
+  mail_type    VARCHAR(20) NOT NULL DEFAULT 'outward',     -- inward / outward (TXN_DIRECTION)
+  UNIQUE KEY ux_dispatch_upload_partner_type (upload_id, partner_id, mail_type),  -- never duplicated
   FOREIGN KEY (upload_id)  REFERENCES uploads(id),
   FOREIGN KEY (partner_id) REFERENCES partners(id)
+);
+
+CREATE TABLE email_events (   -- follow-up history: status changes, follow-up emails, notes
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  dispatch_id  INT          NOT NULL,
+  kind         VARCHAR(20)  NOT NULL,          -- status / followup / note / remarks
+  reply_status VARCHAR(20)  NULL,
+  note         TEXT         NULL,
+  subject      VARCHAR(300) NULL,
+  body_html    TEXT         NULL,
+  to_emails    TEXT         NULL,
+  cc_emails    TEXT         NULL,
+  ok           BOOLEAN      NOT NULL DEFAULT TRUE,
+  error        TEXT         NULL,
+  created_by   VARCHAR(30)  NOT NULL,
+  created_at   DATETIME     NOT NULL,
+  INDEX (dispatch_id),
+  FOREIGN KEY (dispatch_id) REFERENCES email_dispatches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE app_settings (   -- Email Configuration page: one row per changed setting (others use the .env default)
+  `key`      VARCHAR(50) PRIMARY KEY,         -- followup_due_days / auto_followup_enabled / auto_followup_max / cc_emails / reply_to
+  value      TEXT        NOT NULL,            -- JSON
+  updated_by VARCHAR(30) NULL,
+  updated_at DATETIME    NOT NULL
 );

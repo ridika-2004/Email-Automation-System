@@ -33,8 +33,6 @@ MAIL_FROM = os.getenv("MAIL_FROM", "npsb-dispute@nagad.test")
 REPLY_TO = os.getenv("REPLY_TO", "npsb-recon@nagad.test")
 CC_EMAILS = _list("CC_EMAILS", "recon.lead@nagad.test,npsb.ops@nagad.test")
 
-UNKNOWN_RESPONSE_CODES = set(_list("UNKNOWN_RESPONSE_CODES", "68,91,96"))
-
 # Login (JWT). Set JWT_SECRET to a long random string in .env, e.g. the output of:
 #   python -c "import secrets; print(secrets.token_urlsafe(48))"
 # Without it a random secret is used, so everyone is signed out when the server restarts.
@@ -62,6 +60,14 @@ PASSWORD_RESET_MINUTES = int(os.getenv("PASSWORD_RESET_MINUTES", "30"))
 # Set to false once everyone has an account, so strangers cannot sign up
 # (signed-in users can still create accounts for others). The first account is always allowed.
 ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "true").lower() == "true"
+
+# Sent emails with no reply and no follow-up for this many days are marked "Follow-up due"
+FOLLOWUP_DUE_DAYS = int(os.getenv("FOLLOWUP_DUE_DAYS", "3"))
+# Automatic follow-ups (defaults; admins change them on the Email Configuration page)
+AUTO_FOLLOWUP_ENABLED = os.getenv("AUTO_FOLLOWUP_ENABLED", "false").lower() == "true"
+AUTO_FOLLOWUP_MAX = int(os.getenv("AUTO_FOLLOWUP_MAX", "3"))
+# How often the server looks for emails whose follow-up is due
+AUTO_FOLLOWUP_CHECK_SECONDS = int(os.getenv("AUTO_FOLLOWUP_CHECK_SECONDS", "300"))
 
 # Roles: "admin" or "user". Creating an admin account needs this code (only admins should know it).
 ADMIN_SIGNUP_CODE = os.getenv("ADMIN_SIGNUP_CODE", "1234")

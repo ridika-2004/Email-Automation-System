@@ -1,6 +1,29 @@
 import { useEffect, useState } from "react";
 import { api, auth } from "../api";
 import { checkPassword, PasswordInput, PasswordStrength } from "../components/Password";
+import { Alert, cx } from "../components/ui";
+
+// Shared Tailwind classes of the sign-in forms
+const authForm = "flex flex-col gap-3.5";
+const fieldInput =
+  "w-full rounded-lg border border-line bg-white px-3 py-2.5 text-sm font-normal text-ink " +
+  "focus:border-brand focus:shadow-focus focus:outline-none";
+// Label with its input (or select) directly inside
+const field =
+  "flex flex-col gap-1.5 text-[13px] font-semibold " +
+  "[&>input]:w-full [&>input]:rounded-lg [&>input]:border [&>input]:border-line [&>input]:bg-white [&>input]:px-3 " +
+  "[&>input]:py-2.5 [&>input]:text-sm [&>input]:font-normal [&>input:focus]:border-brand [&>input:focus]:shadow-focus " +
+  "[&>input:focus]:outline-none [&>select]:w-full [&>select]:rounded-lg [&>select]:border [&>select]:border-line " +
+  "[&>select]:bg-white [&>select]:px-3 [&>select]:py-2.5 [&>select]:text-sm [&>select]:font-normal " +
+  "[&>select:focus]:border-brand [&>select:focus]:shadow-focus [&>select:focus]:outline-none";
+const link = "cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-brand hover:underline";
+const check = "flex cursor-pointer items-center gap-2 text-[13px] [&>input]:h-4 [&>input]:w-4 [&>input]:shrink-0 [&>input]:accent-brand";
+const submitBase = "mt-1 w-full rounded-md border px-3.5 py-[11px] text-[15px] font-semibold disabled:cursor-not-allowed disabled:opacity-50";
+const submitPrimary = cx(submitBase, "border-brand bg-brand text-white hover:enabled:bg-brand-dark");
+const submitPlain = cx(submitBase, "border-line bg-white text-ink hover:enabled:bg-gray-100");
+const codeInput =
+  "w-full rounded-lg border border-line bg-white p-3 text-center font-mono text-[28px] font-bold tracking-[12px] text-ink " +
+  "focus:border-brand focus:shadow-focus focus:outline-none";
 
 const USERNAME_RE = /^[a-z0-9._-]{3,30}$/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -44,40 +67,48 @@ export default function AuthPage({ onSignedIn, notice: initialNotice }) {
     reset: ["Choose a new password", "Pick a strong password you don't use anywhere else."],
   };
 
+  const tab = (active) => cx("rounded-md p-2 text-[13px] font-semibold", active ? "bg-white text-ink shadow" : "text-muted hover:text-ink");
+
   return (
-    <div className="auth-screen">
-      <aside className="auth-brand">
-        <div className="auth-logo" aria-hidden="true">N</div>
-        <h1>NPSB Dispute Email Automation</h1>
-        <p>Group unknown-response transactions by partner and request clarification by email.</p>
-        <ul>
-          <li>Upload the daily NPSB dispute file</li>
-          <li>Review transactions grouped by partner</li>
-          <li>Preview, edit and send one email per partner</li>
+    <div className="grid min-h-screen grid-cols-2 max-[820px]:grid-cols-1">
+      <aside className="flex flex-col justify-center gap-3.5 bg-gradient-to-br from-brand via-brand-dark to-brand-darker p-14 text-white max-[820px]:px-4 max-[820px]:py-8">
+        <div className="flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-white text-[26px] font-extrabold text-brand" aria-hidden="true">N</div>
+        <h1 className="max-w-[420px] text-[30px] font-bold leading-tight max-[820px]:text-[22px]">NPSB Dispute Email Automation</h1>
+        <p className="max-w-[420px] text-[15px] leading-normal opacity-90">
+          Group transactions by partner and mail type, and email each partner from the right template.
+        </p>
+        <ul className="mt-3 flex flex-col gap-2.5 max-[820px]:hidden">
+          {["Upload the daily NPSB dispute file", "Review transactions grouped by partner and mail type",
+            "Preview, edit and send one email per partner and mail type"].map((item) => (
+            <li key={item} className="flex items-center gap-2 opacity-95">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/20 text-xs" aria-hidden="true">✓</span>
+              {item}
+            </li>
+          ))}
         </ul>
       </aside>
 
-      <main className="auth-panel">
-        <div className="auth-card">
-          <h2>{titles[view][0]}</h2>
-          <p className="muted">{titles[view][1]}</p>
+      <main className="flex items-center justify-center px-4 py-10">
+        <div className="flex w-full max-w-[420px] flex-col gap-3.5 rounded-xl border border-line bg-white p-8 shadow-card max-[820px]:px-5 max-[820px]:py-6">
+          <h2 className="text-[22px] font-bold">{titles[view][0]}</h2>
+          <p className="-mt-2 mb-1 text-muted">{titles[view][1]}</p>
 
           {(view === "login" || view === "register") && settings.allow_registration && (
-            <div className="auth-switch" role="tablist">
+            <div className="grid grid-cols-2 rounded-lg bg-gray-100 p-1" role="tablist">
               <button type="button" role="tab" aria-selected={view === "login"}
-                className={view === "login" ? "active" : ""} onClick={() => go("login")}>Sign in</button>
+                className={tab(view === "login")} onClick={() => go("login")}>Sign in</button>
               <button type="button" role="tab" aria-selected={view === "register"}
-                className={view === "register" ? "active" : ""} onClick={() => go("register")}>Create account</button>
+                className={tab(view === "register")} onClick={() => go("register")}>Create account</button>
             </div>
           )}
 
           {backendDown && (
-            <div className="alert error">
+            <Alert type="error" className="">
               Cannot reach the server. Start the backend in the backend folder with{" "}
-              <code>uvicorn app.main:app --reload</code>.
-            </div>
+              <code className="rounded bg-black/5 px-1 py-px">uvicorn app.main:app --reload</code>.
+            </Alert>
           )}
-          {notice && <div className="alert info">{notice}</div>}
+          {notice && <Alert type="info" className="">{notice}</Alert>}
 
           {view === "login" && (
             <LoginForm rememberDays={settings.remember_me_days} onSignedIn={onSignedIn}
@@ -100,7 +131,7 @@ export default function AuthPage({ onSignedIn, notice: initialNotice }) {
           )}
 
           {view === "login" && !settings.allow_registration && (
-            <p className="auth-footnote">Need an account? Ask an existing user to create one for you.</p>
+            <p className="text-center text-xs text-muted">Need an account? Ask an admin to create one for you.</p>
           )}
         </div>
       </main>
@@ -155,27 +186,27 @@ function LoginForm({ rememberDays, onSignedIn, onForgot, onNeedsCode }) {
   }
 
   return (
-    <form className="auth-form" onSubmit={submit} noValidate>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <label className="auth-field">
+    <form className={authForm} onSubmit={submit} noValidate>
+      {error && <Alert type="error" className="" role="alert">{error}</Alert>}
+      <label className={field}>
         <span>Username or email</span>
         <input autoFocus autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} />
       </label>
-      <label className="auth-field">
-        <span className="label-row">
+      <label className={field}>
+        <span className="flex items-baseline justify-between">
           Password
-          <button type="button" className="link" onClick={onForgot}>Forgot password?</button>
+          <button type="button" className={link} onClick={onForgot}>Forgot password?</button>
         </span>
-        <PasswordInput value={password} onChange={setPassword} autoComplete="current-password" />
+        <PasswordInput className={fieldInput} value={password} onChange={setPassword} autoComplete="current-password" />
       </label>
-      <label className="auth-check">
+      <label className={check}>
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
         <span>
           Keep me signed in for {rememberDays} days
-          <small className="muted block">On this browser, later sign-ins need only your password, no email code.</small>
+          <small className="mt-0.5 block text-xs font-normal text-muted">On this browser, later sign-ins need only your password, no email code.</small>
         </span>
       </label>
-      <button className="btn primary auth-submit" disabled={busy || !login.trim() || !password}>
+      <button className={submitPrimary} disabled={busy || !login.trim() || !password}>
         {busy ? "Signing in..." : "Sign in"}
       </button>
     </form>
@@ -213,32 +244,32 @@ function RegisterForm({ onRegistered }) {
     });
   }
 
-  const fieldError = (f) => touched[f] && problems[f] && <small className="text-red">{problems[f]}</small>;
+  const fieldError = (f) => touched[f] && problems[f] && <small className="font-normal text-red-700">{problems[f]}</small>;
 
   return (
-    <form className="auth-form" onSubmit={submit} noValidate>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <label className="auth-field">
+    <form className={authForm} onSubmit={submit} noValidate>
+      {error && <Alert type="error" className="" role="alert">{error}</Alert>}
+      <label className={field}>
         <span>Full name</span>
         <input autoFocus autoComplete="name" value={form.full_name} maxLength={100}
           onChange={(e) => set("full_name")(e.target.value)} onBlur={touch("full_name")} />
         {fieldError("full_name")}
       </label>
-      <div className="auth-row">
-        <label className="auth-field">
+      <div className="grid grid-cols-2 gap-3 max-[820px]:grid-cols-1">
+        <label className={field}>
           <span>Username</span>
           <input autoComplete="username" value={form.username} maxLength={30} placeholder="e.g. your.name"
             onChange={(e) => set("username")(e.target.value)} onBlur={touch("username")} />
           {fieldError("username")}
         </label>
-        <label className="auth-field">
+        <label className={field}>
           <span>Email</span>
           <input type="email" autoComplete="email" value={form.email} maxLength={254}
             onChange={(e) => set("email")(e.target.value)} onBlur={touch("email")} />
           {fieldError("email")}
         </label>
       </div>
-      <label className="auth-field">
+      <label className={field}>
         <span>Role</span>
         <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value, admin_code: "" }))}>
           <option value="user">User</option>
@@ -246,23 +277,23 @@ function RegisterForm({ onRegistered }) {
         </select>
       </label>
       {form.role === "admin" && (
-        <label className="auth-field">
+        <label className={field}>
           <span>Admin code</span>
-          <PasswordInput value={form.admin_code} onChange={set("admin_code")} autoComplete="off" />
-          <small className="muted">Only admins know this code. Without it, choose User.</small>
+          <PasswordInput className={fieldInput} value={form.admin_code} onChange={set("admin_code")} autoComplete="off" />
+          <small className="font-normal text-muted">Only admins know this code. Without it, choose User.</small>
         </label>
       )}
-      <label className="auth-field">
+      <label className={field}>
         <span>Password</span>
-        <PasswordInput value={form.password} onChange={set("password")} autoComplete="new-password" />
+        <PasswordInput className={fieldInput} value={form.password} onChange={set("password")} autoComplete="new-password" />
       </label>
       <PasswordStrength password={form.password} username={username} email={form.email} />
-      <label className="auth-field">
+      <label className={field}>
         <span>Confirm password</span>
-        <PasswordInput value={confirm} onChange={setConfirm} autoComplete="new-password" />
-        {confirm && !confirmOk && <small className="text-red">Passwords do not match.</small>}
+        <PasswordInput className={fieldInput} value={confirm} onChange={setConfirm} autoComplete="new-password" />
+        {confirm && !confirmOk && <small className="font-normal text-red-700">Passwords do not match.</small>}
       </label>
-      <button className="btn primary auth-submit" disabled={busy || !canSubmit}>
+      <button className={submitPrimary} disabled={busy || !canSubmit}>
         {busy ? "Creating account and sending code..." : "Create account"}
       </button>
     </form>
@@ -271,10 +302,10 @@ function RegisterForm({ onRegistered }) {
 
 // ---------------------------------------------------------------- sign-in code (6 digits)
 
-export function CodeInput({ value, onChange, autoFocus = true }) {
+export function CodeInput({ value, onChange, autoFocus = true, className = "" }) {
   return (
     <input
-      className="code-input"
+      className={cx(codeInput, className)}
       value={value}
       onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 6))}
       inputMode="numeric"
@@ -322,21 +353,21 @@ function VerifyForm({ pending, onSignedIn, onBack }) {
   }
 
   return (
-    <form className="auth-form" onSubmit={submit} noValidate>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      {info && <div className="alert success">{info}</div>}
-      <p className="small">
+    <form className={authForm} onSubmit={submit} noValidate>
+      {error && <Alert type="error" className="" role="alert">{error}</Alert>}
+      {info && <Alert type="success" className="">{info}</Alert>}
+      <p className="text-xs">
         Code sent to <b>{pending.email}</b>. It is valid for 15 minutes. Check your spam folder if you don't see it.
       </p>
       <CodeInput value={code} onChange={setCode} />
-      <button className="btn primary auth-submit" disabled={busy || code.length !== 6}>
+      <button className={submitPrimary} disabled={busy || code.length !== 6}>
         {busy ? "Signing in..." : "Sign in"}
       </button>
-      <div className="row-between small">
-        <button type="button" className="link" onClick={onBack}>Back to sign in</button>
+      <div className="flex items-start justify-between gap-3 text-xs">
+        <button type="button" className={link} onClick={onBack}>Back to sign in</button>
         {resendIn > 0
-          ? <span className="muted">Resend code in {resendIn}s</span>
-          : <button type="button" className="link" onClick={resend}>Resend code</button>}
+          ? <span className="font-normal text-muted">Resend code in {resendIn}s</span>
+          : <button type="button" className={link} onClick={resend}>Resend code</button>}
       </div>
     </form>
   );
@@ -358,24 +389,24 @@ function ForgotForm({ onBack }) {
 
   if (sent) {
     return (
-      <div className="auth-form">
-        <div className="alert success">{sent}</div>
-        <p className="muted small">Didn't get it? Check your spam folder, or try again in a few minutes.</p>
-        <button type="button" className="btn auth-submit" onClick={onBack}>Back to sign in</button>
+      <div className={authForm}>
+        <Alert type="success" className="">{sent}</Alert>
+        <p className="text-xs text-muted">Didn't get it? Check your spam folder, or try again in a few minutes.</p>
+        <button type="button" className={submitPlain} onClick={onBack}>Back to sign in</button>
       </div>
     );
   }
   return (
-    <form className="auth-form" onSubmit={submit} noValidate>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <label className="auth-field">
+    <form className={authForm} onSubmit={submit} noValidate>
+      {error && <Alert type="error" className="" role="alert">{error}</Alert>}
+      <label className={field}>
         <span>Email</span>
         <input type="email" autoFocus autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       </label>
-      <button className="btn primary auth-submit" disabled={busy || !valid}>
+      <button className={submitPrimary} disabled={busy || !valid}>
         {busy ? "Sending..." : "Send reset link"}
       </button>
-      <button type="button" className="link center" onClick={onBack}>Back to sign in</button>
+      <button type="button" className={cx(link, "self-center text-[13px]")} onClick={onBack}>Back to sign in</button>
     </form>
   );
 }
@@ -405,30 +436,30 @@ function ResetForm({ onDone, onRequestNew }) {
 
   if (linkError) {
     return (
-      <div className="auth-form">
-        <div className="alert error">{linkError}</div>
-        <button type="button" className="btn primary auth-submit" onClick={onRequestNew}>Request a new link</button>
+      <div className={authForm}>
+        <Alert type="error" className="">{linkError}</Alert>
+        <button type="button" className={submitPrimary} onClick={onRequestNew}>Request a new link</button>
       </div>
     );
   }
-  if (username === null) return <p className="muted">Checking your link...</p>;
+  if (username === null) return <p className="font-normal text-muted">Checking your link...</p>;
 
   return (
-    <form className="auth-form" onSubmit={submit} noValidate>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <p className="small">Resetting the password for <b>{username}</b>. You will be signed out on all devices.</p>
+    <form className={authForm} onSubmit={submit} noValidate>
+      {error && <Alert type="error" className="" role="alert">{error}</Alert>}
+      <p className="text-xs">Resetting the password for <b>{username}</b>. You will be signed out on all devices.</p>
       <input type="text" autoComplete="username" value={username} readOnly hidden />
-      <label className="auth-field">
+      <label className={field}>
         <span>New password</span>
-        <PasswordInput value={password} onChange={setPassword} autoComplete="new-password" autoFocus />
+        <PasswordInput className={fieldInput} value={password} onChange={setPassword} autoComplete="new-password" autoFocus />
       </label>
       <PasswordStrength password={password} username={username} />
-      <label className="auth-field">
+      <label className={field}>
         <span>Confirm new password</span>
-        <PasswordInput value={confirm} onChange={setConfirm} autoComplete="new-password" />
-        {confirm && confirm !== password && <small className="text-red">Passwords do not match.</small>}
+        <PasswordInput className={fieldInput} value={confirm} onChange={setConfirm} autoComplete="new-password" />
+        {confirm && confirm !== password && <small className="font-normal text-red-700">Passwords do not match.</small>}
       </label>
-      <button className="btn primary auth-submit" disabled={busy || !canSubmit}>
+      <button className={submitPrimary} disabled={busy || !canSubmit}>
         {busy ? "Saving..." : "Reset password"}
       </button>
     </form>

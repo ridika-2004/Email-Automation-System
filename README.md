@@ -24,10 +24,11 @@ npsb-email-automation/
 │       ├── email_service.py  builds the email, masks accounts, sends via SMTP
 │       ├── seed.py           demo partners added on first start
 │       ├── database.py       DB connection
+│       ├── settings.py       Email Configuration values (DB, .env defaults)
 │       └── config.py         reads .env
 ├── frontend/
 │   └── src/
-│       ├── App.jsx           tabs
+│       ├── App.jsx           page layout: sidebar (components/Sidebar.jsx) + pages
 │       ├── api.js            calls to the backend
 │       └── pages/            UploadPage, GroupsPage, EmailsPage, PartnersPage
 └── sample-data/
@@ -105,7 +106,11 @@ Open **http://localhost:5173**
 - 5 wrong passwords lock the account for 15 minutes (any other user can unlock it).
 - **Forgot password?** emails a one-time reset link (valid 30 minutes) through the SMTP server in `.env`.
   With the test mail server, open the saved email in `backend\sent_emails\` and click the link.
-- **My account**: edit your profile, change your password, see and sign out your devices,
+- **Menu**: move the mouse to the left edge of the screen and point at the arrow to open the sidebar
+  (pages, Email Configuration and User Settings). The pin button keeps it open.
+- **Email Configuration**: after how many days a sent email is *Follow-up due*, automatic follow-ups
+  (on/off, at most N per email), CC addresses and Reply-To. Everyone can see it; admins change it.
+- **My Profile**: edit your profile, change your password, see and sign out your devices,
   and review recent security activity.
 
 ### Common problems
@@ -172,8 +177,10 @@ Header names are case-insensitive (`Response Code` = `response_code`).
 |---|---|
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | MySQL connection (same as Workbench) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS` | mail server (test_mail_server.py by default) |
-| `MAIL_FROM`, `REPLY_TO` | sender + monitored reply mailbox |
-| `CC_EMAILS` | Nagad people CC'd on every email |
+| `MAIL_FROM`, `REPLY_TO` | sender + monitored reply mailbox (Reply-To can be changed in Email Configuration) |
+| `CC_EMAILS` | Nagad people CC'd on every email (default; change it in Email Configuration) |
+| `FOLLOWUP_DUE_DAYS`, `AUTO_FOLLOWUP_ENABLED`, `AUTO_FOLLOWUP_MAX` | follow-up defaults; admins change them in Email Configuration |
+| `AUTO_FOLLOWUP_CHECK_SECONDS` | how often the server looks for due emails (default 300) |
 | `UNKNOWN_RESPONSE_CODES` | codes treated as unknown |
 | `SMTP_MAX_ATTEMPTS` | retries before marking an email FAILED |
 
@@ -182,5 +189,4 @@ Header names are case-insensitive (`Response Code` = `response_code`).
 - Email templates configurable from the portal (template matrix)
 - SMTP settings editable from the portal (currently `.env`)
 - Maker–checker approval and change history
-- Automatic reminder emails after the response period
 - Login / role-based access

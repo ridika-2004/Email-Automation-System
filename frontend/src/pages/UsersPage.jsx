@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, describeDevice, formatDateTime } from "../api";
 import { checkPassword, PasswordInput, PasswordStrength } from "../components/Password";
 import { EVENT_LABELS, RoleBadge } from "./AccountPage";
+import { Alert, badge, btnCls, card, cx, formCls, h2, input, num, page, table, tableCompact } from "../components/ui";
 
 const EMPTY_USER = { full_name: "", username: "", email: "", password: "", role: "user", admin_code: "" };
 
@@ -42,15 +43,15 @@ export default function UsersPage({ currentUser }) {
   }
 
   return (
-    <div className="page">
-      <section className="card">
-        <div className="row-between">
-          <h2>Users ({users.length})</h2>
-          <button className="btn primary" onClick={() => setShowCreate((s) => !s)}>
+    <div className={page}>
+      <section className={card}>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className={h2}>Users ({users.length})</h2>
+          <button className={btnCls("primary")} onClick={() => setShowCreate((s) => !s)}>
             {showCreate ? "Close" : "+ New user"}
           </button>
         </div>
-        {message && <div className={`alert ${message.type}`}>{message.text}</div>}
+        {message && <Alert type={message.type}>{message.text}</Alert>}
         {showCreate && (
           <CreateUserForm onCreated={(u) => {
             setUsers((list) => [...list, u].sort((a, b) => a.username.localeCompare(b.username)));
@@ -58,7 +59,7 @@ export default function UsersPage({ currentUser }) {
             setMessage({ type: "success", text: `Account "${u.username}" created.` });
           }} />
         )}
-        <table className="table">
+        <table className={table}>
           <thead>
             <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th><th /></tr>
           </thead>
@@ -68,22 +69,22 @@ export default function UsersPage({ currentUser }) {
               const timeLeft = lockTimeLeft(u.locked_until, now);
               return (
                 <tr key={u.id}>
-                  <td><b>{u.full_name || "—"}</b>{isMe && <span className="muted small"> (you)</span>}</td>
+                  <td><b>{u.full_name || "—"}</b>{isMe && <span className="text-xs text-muted"> (you)</span>}</td>
                   <td>{u.username}</td>
-                  <td className="small">
-                    {u.email || <span className="muted">none</span>}
+                  <td className="text-xs">
+                    {u.email || <span className="text-muted">none</span>}
                   </td>
                   <td><RoleBadge role={u.role} /></td>
                   <td>
                     {timeLeft
-                      ? <span className="badge red" title={`Unlocks automatically at ${formatDateTime(u.locked_until)}`}>Locked</span>
-                      : <span className="badge green" title="Not locked: can sign in">Active</span>}
+                      ? <span className={badge("red")} title={`Unlocks automatically at ${formatDateTime(u.locked_until)}`}>Locked</span>
+                      : <span className={badge("green")} title="Not locked: can sign in">Active</span>}
                   </td>
-                  <td className="small">{formatDateTime(u.last_login_at)}</td>
-                  <td className="num">
-                    <div className="actions end">
+                  <td className="text-xs">{formatDateTime(u.last_login_at)}</td>
+                  <td className={num}>
+                    <div className="flex justify-end gap-2">
                       {timeLeft && (
-                        <button className="btn small" onClick={() => update(u, { unlock: true })}
+                        <button className={btnCls("default", "sm")} onClick={() => update(u, { unlock: true })}
                           title={`The lock ends by itself at ${formatDateTime(u.locked_until)}`}>
                           Unlock ({timeLeft} left)
                         </button>
@@ -124,24 +125,24 @@ function CreateUserForm({ onCreated }) {
   }
 
   return (
-    <form className="form create-user" onSubmit={submit} noValidate>
-      {error && <div className="alert error">{error}</div>}
-      <div className="form-row">
-        <label>Full name<input value={form.full_name} onChange={(e) => set("full_name")(e.target.value)} /></label>
-        <label>Username<input value={form.username} onChange={(e) => set("username")(e.target.value)} autoComplete="off" /></label>
+    <form className={cx(formCls, "my-3 !max-w-none rounded-lg border border-line bg-gray-50 p-4")} onSubmit={submit} noValidate>
+      {error && <Alert type="error">{error}</Alert>}
+      <div className="grid grid-cols-2 gap-3 max-[820px]:grid-cols-1">
+        <label>Full name<input className={input} value={form.full_name} onChange={(e) => set("full_name")(e.target.value)} /></label>
+        <label>Username<input className={input} value={form.username} onChange={(e) => set("username")(e.target.value)} autoComplete="off" /></label>
       </div>
       <label>Email
-        <input type="email" value={form.email} onChange={(e) => set("email")(e.target.value)} autoComplete="off" />
-        <small className="muted">Must be a real address: every sign-in needs a code emailed to it.</small>
+        <input className={input} type="email" value={form.email} onChange={(e) => set("email")(e.target.value)} autoComplete="off" />
+        <small className="text-muted">Must be a real address: every sign-in needs a code emailed to it.</small>
       </label>
       <label>Temporary password
         <PasswordInput value={form.password} onChange={set("password")} autoComplete="new-password" />
-        <small className="muted">Share it securely; the user can change it under My account.</small>
+        <small className="text-muted">Share it securely; the user can change it under My account.</small>
       </label>
       {form.password && <PasswordStrength password={form.password} username={form.username} email={form.email} />}
-      <div className="form-row">
+      <div className="grid grid-cols-2 gap-3 max-[820px]:grid-cols-1">
         <label>Role
-          <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value, admin_code: "" }))}>
+          <select className={input} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value, admin_code: "" }))}>
             <option value="user">User</option>
             <option value="admin">Admin</option>
           </select>
@@ -152,7 +153,7 @@ function CreateUserForm({ onCreated }) {
           </label>
         )}
       </div>
-      <div><button className="btn primary" disabled={busy || !canSubmit}>{busy ? "Creating..." : "Create user"}</button></div>
+      <div><button className={btnCls("primary")} disabled={busy || !canSubmit}>{busy ? "Creating..." : "Create user"}</button></div>
     </form>
   );
 }
@@ -165,33 +166,33 @@ function AuditLog() {
   const shown = onlyFailures ? events.filter((e) => !e.success) : events;
 
   return (
-    <section className="card">
-      <div className="row-between">
+    <section className={card}>
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h2>Security audit log</h2>
-          <p className="muted small">Sign-ins, failures, lockouts, password changes and account changes.</p>
+          <h2 className={h2}>Security audit log</h2>
+          <p className="text-xs text-muted">Sign-ins, failures, lockouts, password changes and account changes.</p>
         </div>
-        <div className="actions">
-          <label className="inline-check">
+        <div className="flex gap-2">
+          <label className="flex cursor-pointer items-center gap-1.5 text-[13px]">
             <input type="checkbox" checked={onlyFailures} onChange={(e) => setOnlyFailures(e.target.checked)} /> Failures only
           </label>
-          <button className="btn small" onClick={load}>Refresh</button>
+          <button className={btnCls("default", "sm")} onClick={load}>Refresh</button>
         </div>
       </div>
-      <table className="table compact">
+      <table className={tableCompact}>
         <thead><tr><th>When</th><th>User</th><th>Event</th><th>Details</th><th>Device</th><th>IP address</th></tr></thead>
         <tbody>
           {shown.map((e) => (
             <tr key={e.id}>
               <td>{formatDateTime(e.created_at)}</td>
               <td>{e.username || "—"}</td>
-              <td><span className={e.success ? "" : "text-red"}>{EVENT_LABELS[e.event] || e.event}</span></td>
-              <td className="muted">{e.detail}</td>
+              <td><span className={e.success ? "" : "text-red-700"}>{EVENT_LABELS[e.event] || e.event}</span></td>
+              <td className="text-muted">{e.detail}</td>
               <td>{describeDevice(e.user_agent)}</td>
-              <td className="mono">{e.ip_address}</td>
+              <td className="font-mono">{e.ip_address}</td>
             </tr>
           ))}
-          {!shown.length && <tr><td colSpan={6} className="muted">Nothing to show.</td></tr>}
+          {!shown.length && <tr><td colSpan={6} className="text-muted">Nothing to show.</td></tr>}
         </tbody>
       </table>
     </section>

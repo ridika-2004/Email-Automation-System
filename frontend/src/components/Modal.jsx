@@ -1,7 +1,8 @@
 import { useEffect } from "react";
+import { cx } from "./ui";
 
 // Pop-up dialog. Closes on Escape or a click outside the box.
-export default function Modal({ title, children, actions, onClose }) {
+export default function Modal({ title, children, actions, onClose, wide = false }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -9,11 +10,13 @@ export default function Modal({ title, children, actions, onClose }) {
   }, [onClose]);
 
   return (
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <h2 id="modal-title">{title}</h2>
-        <div className="modal-body">{children}</div>
-        <div className="modal-actions">{actions}</div>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/45 p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className={cx("w-full rounded-[10px] bg-white p-[22px] shadow-modal", wide ? "max-h-[92vh] max-w-[860px] overflow-y-auto" : "max-w-[480px]")}
+        role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title" className="mb-2.5 text-base font-bold">{title}</h2>
+        <div className="[&_p]:my-1.5 [&_p]:break-words">{children}</div>
+        <div className="mt-[18px] flex flex-wrap items-center justify-end gap-2">{actions}</div>
       </div>
     </div>
   );

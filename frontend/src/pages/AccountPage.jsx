@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, auth, describeDevice, formatDateTime } from "../api";
 import { checkPassword, PasswordInput, PasswordStrength } from "../components/Password";
 import { CodeInput, useResendTimer } from "./AuthPage";
+import { Alert, badge, btnCls, card, formCls, h2, input, link, num, page, table, tableCompact } from "../components/ui";
 
 export const EVENT_LABELS = {
   register: "Account created",
@@ -32,8 +33,8 @@ export const EVENT_LABELS = {
 
 export default function AccountPage({ user, onUserChange, onSignedOut }) {
   return (
-    <div className="page">
-      <div className="account-grid">
+    <div className={page}>
+      <div className="grid grid-cols-auto-fit-320 items-start gap-4">
         <ProfileCard user={user} onUserChange={onUserChange} />
         <ChangePasswordCard user={user} />
       </div>
@@ -66,9 +67,9 @@ function ProfileCard({ user, onUserChange }) {
   }
 
   return (
-    <section className="card">
-      <h2>Profile</h2>
-      <dl className="facts">
+    <section className={card}>
+      <h2 className={h2}>Profile</h2>
+      <dl className="mb-4 mt-1 grid grid-cols-[110px_1fr] gap-x-3 gap-y-1.5 text-[13px] [&_dt]:text-muted">
         <dt>Username</dt><dd>{user.username}</dd>
         <dt>Role</dt><dd><RoleBadge role={user.role} /></dd>
         <dt>Email</dt>
@@ -82,18 +83,18 @@ function ProfileCard({ user, onUserChange }) {
         <ConfirmEmailChange user={user} onUserChange={onUserChange}
           onDone={(updated, text) => { setForm({ full_name: updated.full_name, email: updated.email || "" }); setMsg({ type: "success", text }); }} />
       )}
-      <form className="form" onSubmit={save}>
-        {msg && <div className={`alert ${msg.type}`}>{msg.text}</div>}
+      <form className={formCls} onSubmit={save}>
+        {msg && <Alert type={msg.type}>{msg.text}</Alert>}
         <label>Full name
-          <input value={form.full_name} maxLength={100} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+          <input className={input} value={form.full_name} maxLength={100} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         </label>
         <label>Email
-          <input type="email" value={form.email} maxLength={254} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          <small className="muted">
+          <input className={input} type="email" value={form.email} maxLength={254} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <small className="text-muted">
             Used for signing in and password resets. A new address must be confirmed with a code sent to it.
           </small>
         </label>
-        <div><button className="btn primary" disabled={busy || !changed}>{busy ? "Saving..." : "Save profile"}</button></div>
+        <div><button className={btnCls("primary")} disabled={busy || !changed}>{busy ? "Saving..." : "Save profile"}</button></div>
       </form>
     </section>
   );
@@ -136,21 +137,21 @@ function ConfirmEmailChange({ user, onUserChange, onDone }) {
   }
 
   return (
-    <form className="pending-email" onSubmit={confirm}>
-      <p className="small">
+    <form className="mb-3.5 flex flex-col gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 [&_p]:m-0" onSubmit={confirm}>
+      <p className="text-xs">
         Confirm your new email <b>{user.pending_email}</b>: enter the 6-digit code we sent there.
         Until then, <b>{user.email}</b> stays your email.
       </p>
-      {msg && <div className={`alert ${msg.type}`}>{msg.text}</div>}
-      <div className="code-row">
-        <CodeInput value={code} onChange={setCode} autoFocus={false} />
-        <button className="btn primary" disabled={busy || code.length !== 6}>{busy ? "Confirming..." : "Confirm"}</button>
+      {msg && <Alert type={msg.type}>{msg.text}</Alert>}
+      <div className="flex items-stretch gap-2">
+        <CodeInput value={code} onChange={setCode} autoFocus={false} className="max-w-[220px] !p-2 !text-xl !tracking-[8px]" />
+        <button className={btnCls("primary")} disabled={busy || code.length !== 6}>{busy ? "Confirming..." : "Confirm"}</button>
       </div>
-      <div className="actions small">
+      <div className="flex gap-2 text-xs">
         {resendIn > 0
-          ? <span className="muted">Resend code in {resendIn}s</span>
-          : <button type="button" className="link" onClick={resend}>Resend code</button>}
-        <button type="button" className="link" onClick={cancel}>Cancel change</button>
+          ? <span className="text-muted">Resend code in {resendIn}s</span>
+          : <button type="button" className={link} onClick={resend}>Resend code</button>}
+        <button type="button" className={link} onClick={cancel}>Cancel change</button>
       </div>
     </form>
   );
@@ -183,13 +184,13 @@ function ChangePasswordCard({ user }) {
   }
 
   return (
-    <section className="card">
-      <h2>Change password</h2>
-      <p className="muted small">
+    <section className={card}>
+      <h2 className={h2}>Change password</h2>
+      <p className="text-xs text-muted">
         Last changed: {formatDateTime(user.password_changed_at)}. Changing it signs you out on every other device.
       </p>
-      <form className="form" onSubmit={submit} noValidate>
-        {msg && <div className={`alert ${msg.type}`}>{msg.text}</div>}
+      <form className={formCls} onSubmit={submit} noValidate>
+        {msg && <Alert type={msg.type}>{msg.text}</Alert>}
         <input type="text" autoComplete="username" value={user.username} readOnly hidden />
         <label>Current password
           <PasswordInput value={current} onChange={setCurrent} autoComplete="current-password" />
@@ -198,12 +199,12 @@ function ChangePasswordCard({ user }) {
           <PasswordInput value={next} onChange={setNext} autoComplete="new-password" />
         </label>
         {next && <PasswordStrength password={next} username={user.username} email={user.email || ""} />}
-        {next && current && next === current && <small className="text-red">Choose a password different from the current one.</small>}
+        {next && current && next === current && <small className="text-red-700">Choose a password different from the current one.</small>}
         <label>Confirm new password
           <PasswordInput value={confirm} onChange={setConfirm} autoComplete="new-password" />
-          {confirm && confirm !== next && <small className="text-red">Passwords do not match.</small>}
+          {confirm && confirm !== next && <small className="text-red-700">Passwords do not match.</small>}
         </label>
-        <div><button className="btn primary" disabled={busy || !canSubmit}>{busy ? "Saving..." : "Change password"}</button></div>
+        <div><button className={btnCls("primary")} disabled={busy || !canSubmit}>{busy ? "Saving..." : "Change password"}</button></div>
       </form>
     </section>
   );
@@ -232,33 +233,33 @@ function SessionsCard({ onSignedOut }) {
   }
 
   return (
-    <section className="card">
-      <div className="row-between">
+    <section className={card}>
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h2>Where you're signed in</h2>
-          <p className="muted small">If you don't recognise a device, sign it out and change your password.</p>
+          <h2 className={h2}>Where you're signed in</h2>
+          <p className="text-xs text-muted">If you don't recognise a device, sign it out and change your password.</p>
         </div>
-        <button className="btn" onClick={signOutEverywhere}>Sign out everywhere</button>
+        <button className={btnCls()} onClick={signOutEverywhere}>Sign out everywhere</button>
       </div>
-      {error && <div className="alert error">{error}</div>}
-      <table className="table">
+      {error && <Alert type="error">{error}</Alert>}
+      <table className={table}>
         <thead><tr><th>Device</th><th>IP address</th><th>Signed in</th><th>Last active</th><th>Expires</th><th /></tr></thead>
         <tbody>
           {sessions.map((s) => (
             <tr key={s.id}>
               <td>
                 <b>{describeDevice(s.user_agent)}</b>{" "}
-                {s.current && <span className="badge green">This device</span>}
-                {s.remember_me && <span className="muted small"> · remembered</span>}
+                {s.current && <span className={badge("green")}>This device</span>}
+                {s.remember_me && <span className="text-xs text-muted"> · remembered</span>}
               </td>
-              <td className="mono small">{s.ip_address}</td>
-              <td className="small">{formatDateTime(s.signed_in_at)}</td>
-              <td className="small">{formatDateTime(s.last_used_at)}</td>
-              <td className="small">{formatDateTime(s.expires_at)}</td>
-              <td className="num"><button className="btn small" onClick={() => revoke(s)}>Sign out</button></td>
+              <td className="font-mono text-xs">{s.ip_address}</td>
+              <td className="text-xs">{formatDateTime(s.signed_in_at)}</td>
+              <td className="text-xs">{formatDateTime(s.last_used_at)}</td>
+              <td className="text-xs">{formatDateTime(s.expires_at)}</td>
+              <td className={num}><button className={btnCls("default", "sm")} onClick={() => revoke(s)}>Sign out</button></td>
             </tr>
           ))}
-          {!sessions.length && <tr><td colSpan={6} className="muted">No active sessions.</td></tr>}
+          {!sessions.length && <tr><td colSpan={6} className="text-muted">No active sessions.</td></tr>}
         </tbody>
       </table>
     </section>
@@ -270,21 +271,21 @@ function ActivityCard() {
   useEffect(() => { api.myActivity().then(setEvents).catch(() => {}); }, []);
 
   return (
-    <section className="card">
-      <h2>Recent security activity</h2>
-      <table className="table compact">
+    <section className={card}>
+      <h2 className={h2}>Recent security activity</h2>
+      <table className={tableCompact}>
         <thead><tr><th>When</th><th>Event</th><th>Details</th><th>Device</th><th>IP address</th></tr></thead>
         <tbody>
           {events.map((e) => (
             <tr key={e.id}>
               <td>{formatDateTime(e.created_at)}</td>
-              <td><span className={e.success ? "" : "text-red"}>{EVENT_LABELS[e.event] || e.event}</span></td>
-              <td className="muted">{e.detail}</td>
+              <td><span className={e.success ? "" : "text-red-700"}>{EVENT_LABELS[e.event] || e.event}</span></td>
+              <td className="text-muted">{e.detail}</td>
               <td>{describeDevice(e.user_agent)}</td>
-              <td className="mono">{e.ip_address}</td>
+              <td className="font-mono">{e.ip_address}</td>
             </tr>
           ))}
-          {!events.length && <tr><td colSpan={5} className="muted">No activity yet.</td></tr>}
+          {!events.length && <tr><td colSpan={5} className="text-muted">No activity yet.</td></tr>}
         </tbody>
       </table>
     </section>
@@ -292,5 +293,5 @@ function ActivityCard() {
 }
 
 export function RoleBadge({ role }) {
-  return <span className={`badge ${role === "admin" ? "blue" : "gray"}`}>{role === "admin" ? "Admin" : "User"}</span>;
+  return <span className={badge(role === "admin" ? "blue" : "gray")}>{role === "admin" ? "Admin" : "User"}</span>;
 }

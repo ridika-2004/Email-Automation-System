@@ -1,8 +1,8 @@
 """Database tables."""
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint,
+    Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.mysql import LONGBLOB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -143,11 +143,11 @@ class AuthEvent(Base):
 
 
 class Partner(Base):
-    """A destination Bank / MFS / PSP that receives NPSB transactions."""
+    """A Bank / MFS / PSP that receives our emails. Matched to file rows by name (KEY_ORG_NM),
+    ignoring upper/lower case; names are unique."""
     __tablename__ = "partners"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    institution_code: Mapped[str] = mapped_column(String(20), unique=True)
     name: Mapped[str] = mapped_column(String(150))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -181,7 +181,6 @@ class Upload(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     total_rows: Mapped[int] = mapped_column(Integer, default=0)
     valid_rows: Mapped[int] = mapped_column(Integer, default=0)
-    unknown_rows: Mapped[int] = mapped_column(Integer, default=0)
     # The original file, kept so the valid / faulty rows can be downloaded later.
     # Deferred: only loaded when a download asks for it.
     file_content: Mapped[bytes | None] = mapped_column(
@@ -191,38 +190,41 @@ class Upload(Base):
 
 
 class Transaction(Base):
-    """A valid row from the uploaded file."""
+    """A valid row from the uploaded file ("Final_Report_for_DMS_Claim" format; file column in brackets)."""
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     upload_id: Mapped[int] = mapped_column(ForeignKey("uploads.id"))
     excel_row: Mapped[int] = mapped_column(Integer)
-    txn_datetime: Mapped[datetime] = mapped_column(DateTime)
-    rrn: Mapped[str] = mapped_column(String(30))
-    stan: Mapped[str] = mapped_column(String(20))
-    amount: Mapped[float] = mapped_column(Numeric(14, 2))
-    source_account: Mapped[str] = mapped_column(String(40))
-    beneficiary_account: Mapped[str] = mapped_column(String(40))
-    txn_type: Mapped[str] = mapped_column(String(50))
-    response_code: Mapped[str] = mapped_column(String(10))
-    nagad_status: Mapped[str] = mapped_column(String(30))
-    dest_institution_code: Mapped[str] = mapped_column(String(20))
-    dest_partner_name: Mapped[str] = mapped_column(String(150))
-    is_unknown: Mapped[bool] = mapped_column(Boolean, default=False)
+    rrn: Mapped[str] = mapped_column(String(30))                                     # NPSB_TXN_RRN
+    approval_date: Mapped[date | None] = mapped_column(Date, nullable=True)          # APPROVAL_DATE
+    approval_datetime_text: Mapped[str | None] = mapped_column(String(40), nullable=True)  # APPROVAL_DATETIME as written
+    txn_datetime: Mapped[datetime] = mapped_column(DateTime)                         # APPROVAL_DATETIME, read
+    txn_type: Mapped[str] = mapped_column(String(80))                                # TXN_TYPE
+    txn_id: Mapped[str | None] = mapped_column(String(40), nullable=True)            # TXN_ID
+    status: Mapped[str] = mapped_column("nagad_status", String(40))                  # FIRST_TXN_STATUS_NAME
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))                            # TXN_AMOUNT
+    from_account_name: Mapped[str | None] = mapped_column(String(150), nullable=True)  # FROMAC_NAME
+    to_account_type: Mapped[str | None] = mapped_column(String(40), nullable=True)   # TOAC_TYPE
+    stan: Mapped[str] = mapped_column(String(20))                                    # ORG_TXN_STAN
+    partner_name: Mapped[str] = mapped_column("dest_partner_name", String(150))      # KEY_ORG_NM
+    org_code: Mapped[str] = mapped_column("dest_institution_code", String(20))       # NPSB_ORG_CODE
+    mail_type: Mapped[str | None] = mapped_column(String(20), nullable=True)         # TXN_DIRECTION: inward / outward
 
 
 class EmailDispatch(Base):
-    """The consolidated email for one partner in one upload.
+    """The consolidated email for one partner and one mail type in one upload.
 
     The unique constraint makes sure we never create two emails
     for the same partner in the same upload (no duplicates).
     """
     __tablename__ = "email_dispatches"
-    __table_args__ = (UniqueConstraint("upload_id", "partner_id"),)
+    __table_args__ = (UniqueConstraint("upload_id", "partner_id", "mail_type", name="ux_dispatch_upload_partner_type"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     upload_id: Mapped[int] = mapped_column(ForeignKey("uploads.id"))
     partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"))
+    mail_type: Mapped[str] = mapped_column(String(20), default="outward")  # picks the template
     to_emails: Mapped[str] = mapped_column(Text)   # comma separated
     cc_emails: Mapped[str] = mapped_column(Text)   # comma separated
     subject: Mapped[str] = mapped_column(String(300))
@@ -241,6 +243,48 @@ class EmailDispatch(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     sent_by: Mapped[str | None] = mapped_column(String(30), nullable=True)       # admin who sent it
     sending_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # when an admin claimed it
+    message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # so follow-ups join its thread
+
+    # Follow-up (sent emails; set by admins by hand)
+    #   not_received: no reply yet (default) | received: partner replied | reconciled: closed, no follow-ups
+    reply_status: Mapped[str] = mapped_column(String(20), default="not_received")
+    reply_status_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    reply_status_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    followup_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_followup_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    remarks: Mapped[str | None] = mapped_column(Text, nullable=True)   # free text from an admin
+    remarks_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    remarks_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     partner: Mapped[Partner] = relationship()
     upload: Mapped["Upload"] = relationship()
+
+
+class EmailEvent(Base):
+    """Follow-up history of one sent email: reply-status changes, follow-up emails and notes."""
+    __tablename__ = "email_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dispatch_id: Mapped[int] = mapped_column(ForeignKey("email_dispatches.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))           # status / followup / note / remarks
+    reply_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # kind "status": the new status
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # kind "followup": the email as sent
+    subject: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_emails: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cc_emails: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)  # follow-up delivered to the mail server
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(30))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class AppSetting(Base):
+    """One setting changed from the Email Configuration page (see settings.py). Missing rows use the .env default."""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)            # JSON
+    updated_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)

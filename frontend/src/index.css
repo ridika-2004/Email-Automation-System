@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Page defaults. All other styling is Tailwind classes in the components (shared ones in components/ui.jsx). */
+@layer base {
+  body {
+    @apply bg-page font-sans text-sm text-ink;
+  }
+}

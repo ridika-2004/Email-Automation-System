@@ -1,9 +1,9 @@
-"""Generates the dummy upload files in this folder.
+"""Generates test upload files in the "Final_Report_for_DMS_Claim" format (next to the real
+inward report Successful_at_Nagad_not_found_in_OIC_Dated_02-09-2026.xlsx).
 
 Run:  python generate_samples.py
 Creates:
-  dispute_transactions_sample.xlsx  -> valid file (2 rows have problems on purpose)
-  dispute_transactions_sample.csv   -> same data as CSV
+  sample_outward_transactions.xlsx  -> Outward rows for a few partners (2 rows have problems on purpose)
   invalid_missing_columns.xlsx      -> rejected because columns are missing
 """
 import random
@@ -13,62 +13,41 @@ import pandas as pd
 
 random.seed(7)
 
-PARTNERS = [
-    ("0101", "bKash", "wallet"),
-    ("0102", "Rocket (DBBL)", "wallet"),
-    ("0201", "BRAC Bank", "account"),
-    ("0202", "Islami Bank Bangladesh", "account"),
-    ("0203", "The City Bank", "account"),
-    ("0301", "Upay", "wallet"),
-]
-UNKNOWN_CODES = ["68", "91", "96"]   # unknown outcome -> needs clarification
-KNOWN_CODES = ["00", "05", "51"]     # success / declined -> ignored by the system
-TXN_TYPES = ["Fund Transfer (P2P)", "Add Money", "Send Money to Bank"]
+COLUMNS = ["NPSB_TXN_RRN", "APPROVAL_DATE", "APPROVAL_DATETIME", "TXN_TYPE", "TXN_ID", "FIRST_TXN_STATUS_NAME",
+           "TXN_AMOUNT", "FROMAC_NAME", "TOAC_TYPE", "ORG_TXN_STAN", "KEY_ORG_NM", "NPSB_ORG_CODE", "TXN_DIRECTION"]
+PARTNERS = [("bKash", "022002"), ("Rocket", "022001"), ("TallyPay", "031005"), ("UPAY", "022005")]
+NAMES = ["Rahim Uddin", "Karim Ahmed", "Nusrat Jahan", "Tania Akter", "Sabbir Hossain", "Mitu Rani"]
 
-
-def wallet():
-    return "01" + random.choice("3456789") + "".join(random.choices("0123456789", k=8))
-
-
-def account():
-    return "".join(random.choices("0123456789", k=13))
-
-
+day = datetime(2026, 9, 2)
 rows = []
-start = datetime(2026, 10, 17, 8, 0, 0)
-for i in range(32):
-    code, name, kind = PARTNERS[i % len(PARTNERS)]  # every partner gets rows
-    unknown = i % 4 != 3                 # ~75% of rows have an unknown code
-    resp = random.choice(UNKNOWN_CODES if unknown else KNOWN_CODES)
-    status = "PENDING" if unknown else ("SUCCESS" if resp == "00" else "FAILED")
+for i in range(20):
+    partner, code = PARTNERS[i % len(PARTNERS)]
+    when = day + timedelta(hours=9, seconds=random.randint(0, 9 * 3600), microseconds=random.randint(0, 999) * 1000)
     rows.append({
-        "Txn Datetime": start + timedelta(minutes=random.randint(0, 900)),
-        "RRN": str(629017000000 + random.randint(100000, 999999)),
-        "STAN": str(random.randint(100000, 999999)),
-        "Amount": random.choice([500, 1000, 1500, 2500, 5000, 7500, 10000, 25000]) + random.choice([0, 0, 50.5]),
-        "Source Account": wallet(),
-        "Beneficiary Account": wallet() if kind == "wallet" else account(),
-        "Txn Type": random.choice(TXN_TYPES),
-        "Response Code": resp,
-        "Nagad Status": status,
-        "Dest Institution Code": code,
-        "Dest Partner Name": name,
+        "NPSB_TXN_RRN": str(624600090000 + i * 7),
+        "APPROVAL_DATE": day,
+        "APPROVAL_DATETIME": when.strftime("%d-%b-%y %I.%M.%S.%f %p").upper(),
+        "TXN_TYPE": "NPSB - NAGAD to MFS",
+        "TXN_ID": f"00051{random.randint(100, 999)}X",
+        "FIRST_TXN_STATUS_NAME": "APPROVED",
+        "TXN_AMOUNT": random.choice([200, 500, 1000, 1500, 2500, 5000]),
+        "FROMAC_NAME": random.choice(NAMES),
+        "TOAC_TYPE": "CUSTOMER",
+        "ORG_TXN_STAN": f"{random.randint(0, 999999):06d}",
+        "KEY_ORG_NM": partner,
+        "NPSB_ORG_CODE": code,
+        "TXN_DIRECTION": "Outward",
     })
 
-rows.sort(key=lambda r: r["Txn Datetime"])
+# two broken rows to show row-level validation (they are skipped, the others still work)
+rows[5]["NPSB_TXN_RRN"] = ""          # blank RRN
+rows[12]["TXN_AMOUNT"] = "abc"        # not a number
 
-# two broken rows to show row-level validation (they are skipped, others still work)
-rows[5]["RRN"] = ""                    # blank RRN
-rows[12]["Amount"] = "abc"             # not a number
+df = pd.DataFrame(rows, columns=COLUMNS)
+with pd.ExcelWriter("sample_outward_transactions.xlsx", engine="openpyxl") as writer:
+    df.to_excel(writer, index=False, sheet_name="Final_Report_for_DMS_Claim")
 
-df = pd.DataFrame(rows)
-df.to_excel("dispute_transactions_sample.xlsx", index=False)
+# missing TXN_ID and TXN_DIRECTION -> the whole file is rejected
+df.drop(columns=["TXN_ID", "TXN_DIRECTION"]).head(5).to_excel("invalid_missing_columns.xlsx", index=False)
 
-csv_df = df.copy()
-csv_df["Txn Datetime"] = csv_df["Txn Datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
-csv_df.to_csv("dispute_transactions_sample.csv", index=False)
-
-# a file missing STAN and Response Code -> the whole file is rejected
-df.drop(columns=["STAN", "Response Code"]).head(5).to_excel("invalid_missing_columns.xlsx", index=False)
-
-print(f"Created {len(df)} rows. Unknown-code rows: {df['Response Code'].isin(UNKNOWN_CODES).sum()}")
+print(f"Created sample_outward_transactions.xlsx ({len(df)} rows) and invalid_missing_columns.xlsx")

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, auth, SESSION_EXPIRED_EVENT } from "./api";
 import AuthPage from "./pages/AuthPage";
 import AccountPage from "./pages/AccountPage";
@@ -9,22 +9,24 @@ import EmailsPage from "./pages/EmailsPage";
 import PartnersPage from "./pages/PartnersPage";
 import PendingPage from "./pages/PendingPage";
 import SentPage from "./pages/SentPage";
+import EmailConfigPage from "./pages/EmailConfigPage";
+import AdminHomePage from "./pages/AdminHomePage";
+import Sidebar, { useSidebarPin } from "./components/Sidebar";
+import { cx } from "./components/ui";
 
-// Users prepare the emails; admins send them from Pending Mails and manage partners and users
-const USER_TABS = [
-  { id: "upload", label: "1. Upload File" },
-  { id: "groups", label: "2. Grouped Transactions" },
-  { id: "emails", label: "3. Email Preview & Send" },
-  { id: "pending", label: "Pending Mails" },
-  { id: "sent", label: "Sent Mails" },
-  { id: "partners", label: "Partner Configuration" },
-];
-const ADMIN_TABS = [
-  { id: "pending", label: "Pending Mails" },
-  { id: "sent", label: "Sent Mails" },
-  { id: "partners", label: "Partner Configuration" },
-  { id: "users", label: "Users & Security" },
-];
+// Title and one-line description shown at the top of each page
+const PAGES = {
+  home: { title: "Home", subtitle: "Upload a dispute file to prepare one email per partner and mail type" },
+  adminHome: { title: "Home", subtitle: "What needs your attention today" },
+  groups: { title: "Grouped Transactions", subtitle: "Transactions of the uploaded file, grouped by partner and mail type" },
+  emails: { title: "Email Preview & Send", subtitle: "Check and edit each partner's email, then send them for approval" },
+  pending: { title: "Pending Mails", subtitle: "Emails waiting for an admin to send them" },
+  sent: { title: "Sent Mails", subtitle: "Emails sent to partners, their replies and follow-ups" },
+  partners: { title: "Partner Configuration", subtitle: "Partners and the addresses their emails go to" },
+  emailConfig: { title: "Email Configuration", subtitle: "Follow-up timing, automatic follow-ups, recipients and the mail server" },
+  account: { title: "My Profile", subtitle: "Your details, password, devices and sign-in activity" },
+  users: { title: "Users & Security", subtitle: "Accounts, roles and the security log" },
+};
 
 const hasResetLink = () => new URLSearchParams(window.location.search).has("reset_token");
 
@@ -68,7 +70,7 @@ export default function App() {
     setNotice("You have been signed out.");
   }
 
-  if (checking) return <div className="auth-loading">Loading...</div>;
+  if (checking) return <div className="flex min-h-screen items-center justify-center text-muted">Loading...</div>;
   if (!user) {
     return <AuthPage key={notice} notice={notice} onSignedIn={(u) => { setUser(u); setNotice(""); }} />;
   }
@@ -77,108 +79,97 @@ export default function App() {
 
 function MainApp({ user, onUserChange, onSignOut }) {
   const isAdmin = user.role === "admin";
-  const tabs = isAdmin ? ADMIN_TABS : USER_TABS;
-  const [tab, setTab] = useState(tabs[0].id);
+  const [tab, setTab] = useState(isAdmin ? "adminHome" : "home");
   const [upload, setUpload] = useState(null); // result of the last successful upload
   const [config, setConfig] = useState(null);
+  const [pinned, togglePin] = useSidebarPin();
 
-  useEffect(() => {
-    api.getConfig().then(setConfig).catch(() => setConfig(null));
-  }, []);
+  const loadConfig = () => api.getConfig().then(setConfig).catch(() => setConfig(null));
+  useEffect(() => { loadConfig(); }, []);
 
-  const needsUpload = (id) => (id === "groups" || id === "emails") && !upload;
+  const open = (id) => { setTab(id); window.scrollTo({ top: 0 }); };
+  const noUpload = { disabled: !upload, hint: "Upload a file first" };
 
-  return (
-    <div className="app">
-      <header className="header">
-        <div>
-          <h1>NPSB Dispute Email Automation</h1>
-          <p>Group unknown-response transactions by partner and request clarification by email</p>
-        </div>
-        <div className="header-right">
-          {config && (
-            <div className="smtp-badge" title="Emails go to this SMTP server">
-              SMTP: {config.smtp_host}:{config.smtp_port}
-            </div>
-          )}
-          <UserMenu user={user} isAdmin={isAdmin} onOpen={setTab} onSignOut={() => onSignOut()} />
-        </div>
-      </header>
+  // Users prepare the emails; admins send them from Pending Mails and manage partners and users
+  const sections = [
+    {
+      title: "Workspace",
+      items: isAdmin
+        ? [{ id: "adminHome", label: "Home", icon: "home" }]
+        : [
+          { id: "home", label: "Home", icon: "home" },
+          { id: "groups", label: "Grouped Transactions", icon: "layers", sub: true, ...noUpload },
+          { id: "emails", label: "Email Preview & Send", icon: "edit", sub: true, ...noUpload },
+        ],
+    },
+    {
+      title: "Mails",
+      items: [
+        { id: "pending", label: "Pending Mails", icon: "clock" },
+        { id: "sent", label: "Sent Mails", icon: "send" },
+      ],
+    },
+    {
+      title: "Configuration",
+      items: [
+        { id: "partners", label: "Partner Configuration", icon: "building" },
+        { id: "emailConfig", label: "Email Configuration", icon: "sliders" },
+      ],
+    },
+    {
+      title: "User Settings",
+      items: [
+        { id: "account", label: "My Profile", icon: "user" },
+        ...(isAdmin ? [{ id: "users", label: "Users & Security", icon: "shield" }] : []),
+        { id: "signout", label: "Sign out", icon: "logout", danger: true, onClick: () => onSignOut() },
+      ],
+    },
+  ];
 
-      <nav className="tabs">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={tab === t.id ? "tab active" : "tab"}
-            disabled={needsUpload(t.id)}
-            title={needsUpload(t.id) ? "Upload a file first" : ""}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-        {upload && <span className="current-file">Current file: {upload.filename} (#{upload.upload_id})</span>}
-      </nav>
-
-      <main>
-        {tab === "upload" && !isAdmin && (
-          <UploadPage
-            config={config}
-            lastUpload={upload}
-            onUploaded={setUpload}
-            onNext={() => setTab("groups")}
-          />
-        )}
-        {tab === "groups" && upload && !isAdmin && <GroupsPage uploadId={upload.upload_id} onNext={() => setTab("emails")} />}
-        {tab === "emails" && upload && !isAdmin && (
-          <EmailsPage uploadId={upload.upload_id} config={config} onOpenPending={() => setTab("pending")} />
-        )}
-        {tab === "pending" && <PendingPage config={config} isAdmin={isAdmin} />}
-        {tab === "sent" && <SentPage config={config} />}
-        {tab === "partners" && <PartnersPage isAdmin={isAdmin} />}
-        {tab === "account" && <AccountPage user={user} onUserChange={onUserChange} onSignedOut={onSignOut} />}
-        {tab === "users" && isAdmin && <UsersPage currentUser={user} />}
-      </main>
-    </div>
-  );
-}
-
-function UserMenu({ user, isAdmin, onOpen, onSignOut }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const pick = (fn) => () => { setOpen(false); fn(); };
+  const info = PAGES[tab];
 
   return (
-    <div className="user-menu" ref={ref}>
-      <button className="user-button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
-        <span className="avatar" aria-hidden="true">{(user.full_name || user.username)[0].toUpperCase()}</span>
-        <span className="user-name">{user.full_name || user.username}</span>
-        <span aria-hidden="true" className="caret">▾</span>
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          <div className="menu-header">
-            <b>{user.full_name || user.username}</b>
-            <span className="muted small">{user.email || user.username}</span>
+    <div className={cx("min-h-screen transition-[padding] duration-200", pinned && "min-[900px]:pl-64")}>
+      <Sidebar
+        sections={sections}
+        active={tab}
+        onSelect={open}
+        user={user}
+        pinned={pinned}
+        onTogglePin={togglePin}
+        footer={config && <span title="Emails go to this SMTP server">SMTP {config.smtp_host}:{config.smtp_port}</span>}
+      />
+
+      <div className="mx-auto max-w-[1200px] px-4 pb-10 min-[640px]:px-8">
+        <header className="flex flex-wrap items-end justify-between gap-2 border-b border-line pb-3.5 pt-6 mb-5">
+          <div>
+            <h1 className="text-xl font-bold">{info.title}</h1>
+            <p className="mt-1 text-muted">{info.subtitle}</p>
           </div>
-          <button role="menuitem" onClick={pick(() => onOpen("account"))}>My account</button>
-          {isAdmin && <button role="menuitem" onClick={pick(() => onOpen("users"))}>Users &amp; security</button>}
-          <button role="menuitem" className="danger" onClick={pick(onSignOut)}>Sign out</button>
-        </div>
-      )}
+          {upload && !isAdmin && ["home", "groups", "emails"].includes(tab) && (
+            <span className="rounded-md border border-line bg-white px-2.5 py-1.5 text-xs text-muted">
+              Current file: <b className="text-ink">{upload.filename}</b> (#{upload.upload_id})
+            </span>
+          )}
+        </header>
+
+        <main>
+          {tab === "adminHome" && isAdmin && <AdminHomePage onOpen={open} />}
+          {tab === "home" && !isAdmin && (
+            <UploadPage config={config} lastUpload={upload} onUploaded={setUpload} onNext={() => open("groups")} />
+          )}
+          {tab === "groups" && upload && !isAdmin && <GroupsPage uploadId={upload.upload_id} onNext={() => open("emails")} />}
+          {tab === "emails" && upload && !isAdmin && (
+            <EmailsPage uploadId={upload.upload_id} config={config} onOpenPending={() => open("pending")} />
+          )}
+          {tab === "pending" && <PendingPage config={config} isAdmin={isAdmin} />}
+          {tab === "sent" && <SentPage config={config} isAdmin={isAdmin} />}
+          {tab === "partners" && <PartnersPage isAdmin={isAdmin} />}
+          {tab === "emailConfig" && <EmailConfigPage isAdmin={isAdmin} onSaved={loadConfig} />}
+          {tab === "account" && <AccountPage user={user} onUserChange={onUserChange} onSignedOut={onSignOut} />}
+          {tab === "users" && isAdmin && <UsersPage currentUser={user} />}
+        </main>
+      </div>
     </div>
   );
 }
