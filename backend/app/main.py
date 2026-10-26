@@ -1,24 +1,29 @@
 """FastAPI app: all API endpoints live in this file.
 
 Flow:
-  1. POST /api/uploads                     -> upload & validate file
-  2. GET  /api/uploads/{id}                -> unknown transactions grouped by partner
-  3. POST /api/uploads/{id}/prepare-emails -> build one email per partner (preview)
-  4. POST /api/uploads/{id}/send           -> send the prepared emails
+  1. POST /api/uploads                     -> upload & validate file                      (users)
+  2. GET  /api/uploads/{id}                -> unknown transactions grouped by partner     (users)
+  3. POST /api/uploads/{id}/prepare-emails -> build one email per partner (preview/edit)  (users)
+  4. POST /api/uploads/{id}/submit         -> PREPARED -> PENDING: waits for an admin     (users)
+  5. GET  /api/pending-emails              -> every PENDING / FAILED email                (everyone)
+  6. POST /api/pending-emails/send         -> send the ticked pending emails              (admins)
+  7. GET  /api/sent-emails                 -> sent emails: search, partner filter, sort    (everyone)
 
-Every endpoint here needs a signed-in user (JWT). Sign-in, sessions and password
-recovery live in auth.py; user management (open to every user) in users.py.
+Every endpoint here needs a signed-in user (JWT). Changing partners and sending emails also
+need the admin role. Sign-in, sessions and password recovery live in auth.py; user management
+(admins only) in users.py.
 """
 import json
 import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from sqlalchemy import inspect, text
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, inspect, or_, text, update
+from sqlalchemy.orm import Session, object_session
 
 from . import auth, config, models, users
 from .database import Base, SessionLocal, create_database_if_missing, engine, get_db
@@ -60,6 +65,10 @@ LATER_COLUMNS = [
     ("partner_emails", "problem", "VARCHAR(255) NULL"),
     ("partner_emails", "problem_at", "DATETIME NULL"),
     ("email_dispatches", "delivery_issues", "TEXT NULL"),
+    ("email_dispatches", "submitted_by", "VARCHAR(30) NULL"),
+    ("email_dispatches", "submitted_at", "DATETIME NULL"),
+    ("email_dispatches", "sent_by", "VARCHAR(30) NULL"),
+    ("email_dispatches", "sending_since", "DATETIME NULL"),
     ("users", "email", "VARCHAR(254) NULL"),
     ("users", "full_name", "VARCHAR(100) NOT NULL DEFAULT ''"),
     ("users", "email_verified", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -71,11 +80,10 @@ LATER_COLUMNS = [
     ("users", "last_login_at", "DATETIME NULL"),
     ("users", "password_changed_at", "DATETIME NULL"),
     ("users", "updated_at", "DATETIME NULL"),
+    ("users", "role", "VARCHAR(10) NOT NULL DEFAULT 'user'"),  # existing accounts become "user"
 ]
 # Columns that are no longer used: (table, column). Removed on startup when present.
-REMOVED_COLUMNS = [
-    ("users", "role"),  # there are no roles: every user can do everything
-]
+REMOVED_COLUMNS: list[tuple[str, str]] = []
 
 
 def add_missing_columns():
@@ -111,7 +119,23 @@ def partner_to_dict(p: models.Partner) -> dict:
     }
 
 
-def dispatch_to_dict(d: models.EmailDispatch) -> dict:
+def user_names(db: Session, usernames) -> dict[str, str]:
+    """username -> full name (the username itself when no name is set)."""
+    wanted = {u for u in usernames if u}
+    if not wanted:
+        return {}
+    rows = db.query(models.User.username, models.User.full_name).filter(models.User.username.in_(wanted)).all()
+    return {username: full_name or username for username, full_name in rows}
+
+
+def dispatches_to_dicts(db: Session, dispatches: list[models.EmailDispatch]) -> list[dict]:
+    names = user_names(db, [n for d in dispatches for n in (d.submitted_by, d.sent_by)])
+    return [dispatch_to_dict(d, names) for d in dispatches]
+
+
+def dispatch_to_dict(d: models.EmailDispatch, names: dict[str, str] | None = None) -> dict:
+    if names is None:
+        names = user_names(object_session(d), [d.submitted_by, d.sent_by])
     return {
         "id": d.id,
         "partner_name": d.partner.name,
@@ -128,6 +152,13 @@ def dispatch_to_dict(d: models.EmailDispatch) -> dict:
         "error": d.error,
         "sent_at": d.sent_at.isoformat() if d.sent_at else None,
         "delivery_issues": issues_of(d),
+        "upload_id": d.upload_id,
+        "upload_filename": d.upload.filename,
+        "submitted_by": d.submitted_by,
+        "submitted_by_name": names.get(d.submitted_by, d.submitted_by),
+        "submitted_at": d.submitted_at.isoformat() if d.submitted_at else None,
+        "sent_by": d.sent_by,                 # while SENDING: the admin sending it right now
+        "sent_by_name": names.get(d.sent_by, d.sent_by),
     }
 
 
@@ -231,7 +262,7 @@ def list_partners(db: Session = Depends(get_db)):
 
 
 @api.post("/api/partners")
-def create_partner(data: PartnerIn, db: Session = Depends(get_db)):
+def create_partner(data: PartnerIn, db: Session = Depends(get_db), _: models.User = Depends(auth.require_admin)):
     code = data.institution_code.strip()
     if db.query(models.Partner).filter_by(institution_code=code).first():
         raise HTTPException(400, f"A partner with institution code {code} already exists")
@@ -243,7 +274,8 @@ def create_partner(data: PartnerIn, db: Session = Depends(get_db)):
 
 
 @api.put("/api/partners/{partner_id}")
-def update_partner(partner_id: int, data: PartnerIn, db: Session = Depends(get_db)):
+def update_partner(partner_id: int, data: PartnerIn, db: Session = Depends(get_db),
+                   _: models.User = Depends(auth.require_admin)):
     partner = db.get(models.Partner, partner_id)
     if not partner:
         raise HTTPException(404, "Partner not found")
@@ -259,6 +291,14 @@ def update_partner(partner_id: int, data: PartnerIn, db: Session = Depends(get_d
     partner.is_active = data.is_active
     # replace the email list with what the UI sent (known problems stay with unchanged addresses)
     partner.emails = build_partner_emails(data.emails, partner.emails)
+    # emails waiting to be sent go to the new addresses
+    to_list = [e.email for e in partner.emails if e.is_active and not e.problem]
+    if to_list:
+        for d in db.query(models.EmailDispatch).filter(
+            models.EmailDispatch.partner_id == partner.id,
+            models.EmailDispatch.status.in_(["PREPARED", "PENDING", "FAILED"]),
+        ):
+            d.to_emails = ",".join(to_list)
     db.commit()
     return partner_to_dict(partner)
 
@@ -416,8 +456,8 @@ def prepare_emails(upload_id: int, db: Session = Depends(get_db)):
         dispatch = db.query(models.EmailDispatch).filter_by(
             upload_id=upload.id, partner_id=partner.id
         ).first()
-        if dispatch and dispatch.status == "SENT":
-            continue  # never rebuild an email that has already gone out
+        if dispatch and dispatch.status != "PREPARED":
+            continue  # with an admin (PENDING / FAILED) or already gone out (SENT): never rebuilt
 
         if dispatch is None:
             dispatch = models.EmailDispatch(upload_id=upload.id, partner_id=partner.id)
@@ -443,7 +483,7 @@ def prepare_emails(upload_id: int, db: Session = Depends(get_db)):
 def list_emails(upload_id: int, db: Session = Depends(get_db)):
     get_upload_or_404(db, upload_id)
     dispatches = db.query(models.EmailDispatch).filter_by(upload_id=upload_id).all()
-    return [dispatch_to_dict(d) for d in dispatches]
+    return dispatches_to_dicts(db, dispatches)
 
 
 class EmailEditIn(BaseModel):
@@ -461,19 +501,25 @@ class EmailEditIn(BaseModel):
         return value
 
 
-def get_unsent_dispatch_or_error(db: Session, email_id: int) -> models.EmailDispatch:
+def get_editable_dispatch_or_error(db: Session, email_id: int, user: models.User) -> models.EmailDispatch:
+    """Drafts (PREPARED) can be changed by anyone; once sent for approval, only by admins."""
     dispatch = db.get(models.EmailDispatch, email_id)
     if not dispatch:
         raise HTTPException(404, "Email not found")
     if dispatch.status == "SENT":
         raise HTTPException(400, "This email has already been sent and can no longer be edited.")
+    if dispatch.status == "SENDING":
+        raise HTTPException(409, "This email is being sent right now and can no longer be edited.")
+    if dispatch.status != "PREPARED" and user.role != "admin":
+        raise HTTPException(403, "This email is waiting for an admin. Only admins can change it now.")
     return dispatch
 
 
 @api.put("/api/emails/{email_id}")
-def edit_email(email_id: int, data: EmailEditIn, db: Session = Depends(get_db)):
+def edit_email(email_id: int, data: EmailEditIn, db: Session = Depends(get_db),
+               user: models.User = Depends(auth.get_current_user)):
     """Save a manual edit. Edited emails are kept when previews are refreshed."""
-    dispatch = get_unsent_dispatch_or_error(db, email_id)
+    dispatch = get_editable_dispatch_or_error(db, email_id, user)
     dispatch.subject = data.subject
     dispatch.body_html = data.body_html
     dispatch.is_edited = True
@@ -482,61 +528,168 @@ def edit_email(email_id: int, data: EmailEditIn, db: Session = Depends(get_db)):
 
 
 @api.delete("/api/emails/{email_id}/edits")
-def discard_email_edits(email_id: int, db: Session = Depends(get_db)):
-    """Throw away manual edits; the next prepare-emails call regenerates the email."""
-    dispatch = get_unsent_dispatch_or_error(db, email_id)
+def discard_email_edits(email_id: int, db: Session = Depends(get_db),
+                        user: models.User = Depends(auth.get_current_user)):
+    """Throw away manual edits. A draft is regenerated by the next prepare-emails call; an email
+    waiting for an admin is regenerated right away (prepare-emails no longer touches it)."""
+    dispatch = get_editable_dispatch_or_error(db, email_id, user)
     dispatch.is_edited = False
+    if dispatch.status != "PREPARED":
+        txns = group_unknown_by_partner(dispatch.upload).get(dispatch.partner.institution_code)
+        if txns:
+            dispatch.subject, dispatch.body_html = build_email(dispatch.partner.name, txns)
     db.commit()
     return dispatch_to_dict(dispatch)
 
 
-@api.post("/api/uploads/{upload_id}/send")
-def send_emails(upload_id: int, db: Session = Depends(get_db)):
-    """Send every email of this upload that is not SENT yet (PREPARED or FAILED).
-
-    Because SENT emails are skipped, clicking the button twice never
-    sends the same email twice.
-    """
+@api.post("/api/uploads/{upload_id}/submit")
+def submit_emails(upload_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+    """A user's "Send": every PREPARED email of this upload becomes PENDING and waits for an admin."""
     get_upload_or_404(db, upload_id)
-    pending = db.query(models.EmailDispatch).filter(
-        models.EmailDispatch.upload_id == upload_id,
-        models.EmailDispatch.status.in_(["PREPARED", "FAILED"]),
-    ).all()
-    if not pending:
+    drafts = db.query(models.EmailDispatch).filter_by(upload_id=upload_id, status="PREPARED").all()
+    if not drafts:
         raise HTTPException(400, "There are no prepared emails to send.")
+    now = datetime.now()
+    for d in drafts:
+        d.status = "PENDING"
+        d.submitted_by = user.username
+        d.submitted_at = now
+    db.commit()
+    return {"submitted": len(drafts), "emails": list_emails(upload_id, db)}
 
-    for d in pending:
-        try:
-            result = send_email(
-                to=d.to_emails.split(","),
-                cc=[c for c in d.cc_emails.split(",") if c],
-                subject=d.subject,
-                html_body=d.body_html,
-            )
-            d.status = "SENT"
-            d.sent_at = datetime.now()
-            d.error = None
-            d.attempts += result.attempts
-            for address, reason in result.refused.items():  # some recipients refused: record, don't hide
-                record_refused(d, address, reason)
-        except RecipientsRefused as exc:
-            d.status = "FAILED"
-            d.error = str(exc)
-            d.attempts += 1
-            for address, reason in exc.refused.items():
-                record_refused(d, address, reason)
-        except Exception as exc:
-            d.status = "FAILED"
-            d.error = str(exc)
-            d.attempts += config.SMTP_MAX_ATTEMPTS
-        db.commit()  # save after each email, so a crash never loses a "SENT" status
 
-    sent = sum(1 for d in pending if d.status == "SENT")
-    return {
-        "sent": sent,
-        "failed": len(pending) - sent,
-        "emails": list_emails(upload_id, db),
-    }
+# An admin's claim on an email: if the server dies mid-send, another admin may claim it after this long
+CLAIM_EXPIRES = timedelta(minutes=10)
+
+
+def pending_query(db: Session):
+    """PENDING and FAILED emails, plus SENDING ones (another admin is sending them right now)."""
+    return db.query(models.EmailDispatch) \
+        .filter(models.EmailDispatch.status.in_(["PENDING", "FAILED", "SENDING"])) \
+        .order_by(models.EmailDispatch.submitted_at, models.EmailDispatch.id)
+
+
+@api.get("/api/pending-emails")
+def list_pending_emails(db: Session = Depends(get_db)):
+    """Emails waiting for an admin (PENDING), and ones whose sending failed (FAILED), from every upload."""
+    return dispatches_to_dicts(db, pending_query(db).all())
+
+
+def claim(db: Session, email_id: int, admin: models.User) -> bool:
+    """Mark one email as SENDING by this admin, in a single UPDATE. When two admins send the same
+    email at the same moment, the database lets only one UPDATE match, so only one of them sends it."""
+    now = datetime.now()
+    E = models.EmailDispatch
+    result = db.execute(
+        update(E)
+        .where(E.id == email_id, or_(
+            E.status.in_(["PENDING", "FAILED"]),
+            and_(E.status == "SENDING", E.sending_since < now - CLAIM_EXPIRES),  # claim left by a crash
+        ))
+        .values(status="SENDING", sent_by=admin.username, sending_since=now)
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
+    return result.rowcount == 1
+
+
+def deliver(db: Session, d: models.EmailDispatch, admin: models.User) -> None:
+    """Send one email this admin has claimed, and record the result. Saved right away, so a crash
+    never loses a "SENT"."""
+    try:
+        result = send_email(
+            to=d.to_emails.split(","),
+            cc=[c for c in d.cc_emails.split(",") if c],
+            subject=d.subject,
+            html_body=d.body_html,
+        )
+        d.status = "SENT"
+        d.sent_at = datetime.now()
+        d.sent_by = admin.username
+        d.error = None
+        d.attempts += result.attempts
+        for address, reason in result.refused.items():  # some recipients refused: record, don't hide
+            record_refused(d, address, reason)
+    except RecipientsRefused as exc:
+        d.status = "FAILED"
+        d.error = str(exc)
+        d.attempts += 1
+        for address, reason in exc.refused.items():
+            record_refused(d, address, reason)
+    except Exception as exc:
+        d.status = "FAILED"
+        d.error = str(exc)
+        d.attempts += config.SMTP_MAX_ATTEMPTS
+    d.sending_since = None
+    db.commit()
+
+
+class SendSelectedIn(BaseModel):
+    ids: list[int]
+
+
+@api.post("/api/pending-emails/send")
+def send_selected(data: SendSelectedIn, db: Session = Depends(get_db), admin: models.User = Depends(auth.require_admin)):
+    """Admin sends the ticked PENDING / FAILED emails. Each one is claimed first, so an email that
+    is already SENT, or being sent by another admin, is skipped: it is never sent twice."""
+    if not data.ids:
+        raise HTTPException(400, "Select at least one pending email to send.")
+    sent, failed, skipped = 0, 0, []
+    for email_id in dict.fromkeys(data.ids):  # each id once, in the order given
+        d = db.get(models.EmailDispatch, email_id)
+        if d is None:
+            continue
+        if not claim(db, email_id, admin):
+            db.refresh(d)
+            who = user_names(db, [d.sent_by]).get(d.sent_by, d.sent_by)
+            skipped.append(f"{d.partner.name}: " + (f"already sent by {who}" if d.status == "SENT"
+                                                     else f"being sent by {who}" if d.status == "SENDING"
+                                                     else "not waiting to be sent"))
+            continue
+        db.refresh(d)
+        deliver(db, d, admin)
+        if d.status == "SENT":
+            sent += 1
+        else:
+            failed += 1
+    if not sent and not failed and skipped:
+        raise HTTPException(409, "Nothing was sent. " + "; ".join(skipped) + ".")
+    return {"sent": sent, "failed": failed, "skipped": skipped, "emails": list_pending_emails(db)}
+
+
+@api.get("/api/sent-emails")
+def list_sent_emails(q: str = "", partner_id: int | None = None, sort: Literal["newest", "oldest"] = "newest",
+                     date_from: date | None = None, date_to: date | None = None,
+                     limit: int = 500, db: Session = Depends(get_db)):
+    """Sent emails from every upload.
+
+    q: words that must each appear in the partner name or code, subject, recipients, file name,
+       or the username / name of who sent it for approval or sent it. partner_id: one partner only.
+    date_from / date_to: sent on or after / on or before these days (both days included).
+    sort: by sent date, "newest" or "oldest" first.
+    """
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(400, "The 'from' date must be on or before the 'to' date.")
+    limit = max(1, min(limit, 2000))
+    E, P, U = models.EmailDispatch, models.Partner, models.Upload
+    query = db.query(E).join(P, E.partner_id == P.id).join(U, E.upload_id == U.id).filter(E.status == "SENT")
+    if partner_id is not None:
+        query = query.filter(E.partner_id == partner_id)
+    if date_from:
+        query = query.filter(E.sent_at >= datetime.combine(date_from, time.min))
+    if date_to:
+        query = query.filter(E.sent_at < datetime.combine(date_to + timedelta(days=1), time.min))
+    for word in q.split()[:10]:
+        like = f"%{word.replace('%', '').replace('_', '')}%"
+        names = db.query(models.User.username).filter(models.User.full_name.ilike(like))
+        query = query.filter(or_(
+            P.name.ilike(like), P.institution_code.ilike(like), E.subject.ilike(like),
+            E.to_emails.ilike(like), E.cc_emails.ilike(like), U.filename.ilike(like),
+            E.submitted_by.ilike(like), E.sent_by.ilike(like),
+            E.submitted_by.in_(names), E.sent_by.in_(names),
+        ))
+    order = (E.sent_at.asc(), E.id.asc()) if sort == "oldest" else (E.sent_at.desc(), E.id.desc())
+    return dispatches_to_dicts(db, query.order_by(*order).limit(limit).all())
 
 
 app.include_router(auth.router)

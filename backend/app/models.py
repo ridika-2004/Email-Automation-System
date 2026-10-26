@@ -25,6 +25,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(30), unique=True)        # stored in lowercase
     email: Mapped[str | None] = mapped_column(String(254), unique=True, nullable=True)  # lowercase
     full_name: Mapped[str] = mapped_column(String(100), default="")
+    # "admin": manages users, changes partners, sends emails. "user": everything else.
+    role: Mapped[str] = mapped_column(String(10), default="user")
     # Proven by entering the code emailed to the address; unverified accounts cannot sign in
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -40,6 +42,23 @@ class User(Base):
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TrustedDevice(Base):
+    """A browser where the user signed in with the emailed code and ticked "Keep me signed in".
+    For REFRESH_TOKEN_REMEMBER_DAYS, signing in there needs only the password. The browser keeps
+    the raw token in an httpOnly cookie; only its SHA-256 hash is stored here."""
+    __tablename__ = "trusted_devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    ip_address: Mapped[str] = mapped_column(String(45), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class RefreshToken(Base):
@@ -211,11 +230,17 @@ class EmailDispatch(Base):
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False)  # manually edited -> keep on refresh
     txn_count: Mapped[int] = mapped_column(Integer)
     total_amount: Mapped[float] = mapped_column(Numeric(14, 2))
-    status: Mapped[str] = mapped_column(String(20), default="PREPARED")  # PREPARED / SENT / FAILED
+    # PREPARED (user's draft) -> PENDING (waiting for an admin) -> SENDING (claimed by one admin) -> SENT / FAILED
+    status: Mapped[str] = mapped_column(String(20), default="PREPARED")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # JSON list of {"email", "reason", "at"}: recipients the mail server refused
     delivery_issues: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_by: Mapped[str | None] = mapped_column(String(30), nullable=True)  # user who sent it for approval
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_by: Mapped[str | None] = mapped_column(String(30), nullable=True)       # admin who sent it
+    sending_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # when an admin claimed it
 
     partner: Mapped[Partner] = relationship()
+    upload: Mapped["Upload"] = relationship()

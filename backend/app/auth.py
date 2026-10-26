@@ -1,9 +1,11 @@
 """Authentication: accounts, sign-in, sessions and password recovery.
 
 How sign-in works
-  * Two steps, every time: POST /api/auth/login checks the password and emails a 6-digit
-    code; POST /api/auth/verify-code checks the code and returns a short-lived JWT access token
-    (15 min). Registering works the same way: the account is used for the first time by
+  * Two steps: POST /api/auth/login checks the password and emails a 6-digit code;
+    POST /api/auth/verify-code checks the code and returns a short-lived JWT access token
+    (15 min). Exception: after a sign-in with the code and "Keep me signed in", that browser is
+    a trusted device for 30 days, and signing in there with "Keep me signed in" needs only the
+    password. Unticking the box, changing/resetting the password or "sign out everywhere" ends it. Registering works the same way: the account is used for the first time by
     entering the emailed code. The frontend keeps it in memory and sends "Authorization: Bearer <token>".
   * It also sets a long-lived refresh token in an httpOnly cookie (JavaScript cannot read
     it). When the access token expires, POST /api/auth/refresh exchanges the cookie for a
@@ -17,7 +19,8 @@ Real email addresses only
   * Every sign-in needs the code emailed to the account's address, so only someone who can
     read that inbox gets in. Changing the email in the profile needs a code sent to the new address.
 
-There are no roles: every signed-in user can use every feature, including managing users.
+Two roles: "admin" and "user". Creating an admin account needs ADMIN_SIGNUP_CODE. Only admins
+manage users, change partners and send emails (require_admin); users can do everything else.
 
 Protection
   * Passwords: PBKDF2-SHA256 (600k iterations, random salt) + strength rules.
@@ -34,6 +37,7 @@ import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from html import escape
+from typing import Literal
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
@@ -53,6 +57,7 @@ JWT_ALGORITHM = "HS256"
 PBKDF2_ITERATIONS = 600_000
 REFRESH_COOKIE = "npsb_refresh"
 REFRESH_COOKIE_PATH = "/api/auth"
+TRUSTED_COOKIE = "npsb_trusted"   # trusted device: password-only sign-in (same path as the refresh cookie)
 REFRESH_REUSE_GRACE_SECONDS = 30  # two tabs refreshing at the same moment is not theft
 
 USERNAME_RE = re.compile(r"[a-z0-9._-]{3,30}")
@@ -147,6 +152,7 @@ def user_to_dict(user: models.User) -> dict:
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
+        "role": user.role,
         "email_verified": user.email_verified,
         "pending_email": user.pending_email,
         "is_active": user.is_active,
@@ -244,6 +250,47 @@ def revoke_all_sessions(db: Session, user: models.User, except_family: str | Non
     query.update({models.RefreshToken.revoked_at: utcnow()}, synchronize_session=False)
 
 
+def trust_device(db: Session, request: Request, response: Response, user: models.User) -> None:
+    """Remember this browser: for the next REFRESH_TOKEN_REMEMBER_DAYS it signs in without a code."""
+    raw = secrets.token_urlsafe(48)
+    days = config.REFRESH_TOKEN_REMEMBER_DAYS
+    db.add(models.TrustedDevice(
+        user_id=user.id, token_hash=hash_token(raw), user_agent=client_agent(request),
+        ip_address=client_ip(request), expires_at=utcnow() + timedelta(days=days),
+    ))
+    response.set_cookie(TRUSTED_COOKIE, raw, max_age=days * 86400, httponly=True,
+                        secure=config.COOKIE_SECURE, samesite="strict", path=REFRESH_COOKIE_PATH)
+
+
+def trusted_device(db: Session, request: Request, user: models.User) -> models.TrustedDevice | None:
+    """This browser's trusted-device record for this user, if it is still valid."""
+    raw = request.cookies.get(TRUSTED_COOKIE)
+    if not raw:
+        return None
+    return db.query(models.TrustedDevice).filter(
+        models.TrustedDevice.token_hash == hash_token(raw),
+        models.TrustedDevice.user_id == user.id,
+        models.TrustedDevice.revoked_at.is_(None),
+        models.TrustedDevice.expires_at > utcnow(),
+    ).first()
+
+
+def forget_device(db: Session, request: Request, response: Response) -> None:
+    """Stop trusting this browser (it needs the emailed code again)."""
+    raw = request.cookies.get(TRUSTED_COOKIE)
+    if raw:
+        db.query(models.TrustedDevice).filter_by(token_hash=hash_token(raw), revoked_at=None) \
+            .update({models.TrustedDevice.revoked_at: utcnow()}, synchronize_session=False)
+        response.delete_cookie(TRUSTED_COOKIE, path=REFRESH_COOKIE_PATH, httponly=True,
+                               secure=config.COOKIE_SECURE, samesite="strict")
+
+
+def revoke_trusted_devices(db: Session, user: models.User) -> None:
+    """Every browser of this user needs the emailed code again."""
+    db.query(models.TrustedDevice).filter_by(user_id=user.id, revoked_at=None) \
+        .update({models.TrustedDevice.revoked_at: utcnow()}, synchronize_session=False)
+
+
 def current_refresh_token(db: Session, request: Request) -> models.RefreshToken | None:
     raw = request.cookies.get(REFRESH_COOKIE)
     if not raw:
@@ -286,6 +333,22 @@ def get_current_user(
     if user is None or not user.is_active or payload["ver"] != user.token_version:
         raise _unauthorized("Your session has ended. Please sign in again.")
     return user
+
+
+def require_admin(user: models.User = Depends(get_current_user)) -> models.User:
+    """The signed-in user if they are an admin, otherwise 403."""
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can do this.")
+    return user
+
+
+def check_admin_code(db: Session, request: Request, role: str, code: str, username: str) -> None:
+    """Admin accounts can only be created with the right admin code."""
+    if role == "admin" and not hmac.compare_digest(code.strip().encode(), config.ADMIN_SIGNUP_CODE.encode()):
+        log_event(db, request, "admin_code_failed", username=username, success=False,
+                  detail="wrong admin code for a new admin account")
+        db.commit()
+        raise HTTPException(403, "Incorrect admin code. Leave the role as User, or ask an admin for the code.")
 
 
 # ---------------------------------------------------------------- email verification codes
@@ -402,6 +465,8 @@ class RegisterIn(BaseModel):
     username: str
     email: str
     password: str
+    role: Literal["admin", "user"] = "user"
+    admin_code: str = ""     # needed when role is "admin"
 
     _name = field_validator("full_name")(lambda cls, v: clean_full_name(v))
     _username = field_validator("username")(lambda cls, v: clean_username(v))
@@ -490,7 +555,8 @@ def auth_settings(db: Session = Depends(get_db)):
 def register(data: RegisterIn, request: Request, response: Response, db: Session = Depends(get_db)):
     register_limiter.check(client_ip(request))
     if not registration_open(db):
-        raise HTTPException(403, "Registration is closed. Ask an existing user to create an account for you.")
+        raise HTTPException(403, "Registration is closed. Ask an admin to create an account for you.")
+    check_admin_code(db, request, data.role, data.admin_code, data.username)
     check_password_strength(data.password, data.username, data.email)
     if db.query(models.User).filter_by(username=data.username).first():
         raise HTTPException(409, "This username is already taken.")
@@ -499,12 +565,12 @@ def register(data: RegisterIn, request: Request, response: Response, db: Session
     validate_real_email(data.email)
 
     user = models.User(
-        username=data.username, email=data.email, full_name=data.full_name,
+        username=data.username, email=data.email, full_name=data.full_name, role=data.role,
         password_hash=hash_password(data.password), password_changed_at=utcnow(),
     )
     db.add(user)
     db.flush()
-    log_event(db, request, "register", user=user)
+    log_event(db, request, "register", user=user, detail=f"role: {user.role}")
     try:
         answer = send_login_code(db, request, user)
     except HTTPException:
@@ -537,7 +603,10 @@ def verify_code(data: VerifyCodeIn, request: Request, response: Response, db: Se
     user.failed_login_count = 0
     user.locked_until = None
     start_session(db, request, response, user, data.remember_me)
-    log_event(db, request, "login_success", user=user, detail="remember me" if data.remember_me else "")
+    if data.remember_me:
+        trust_device(db, request, response, user)  # next time: password only on this browser
+    log_event(db, request, "login_success", user=user,
+              detail="remember me; device trusted" if data.remember_me else "")
     db.commit()
     return token_response(user)
 
@@ -608,8 +677,23 @@ def login(data: LoginIn, request: Request, response: Response, db: Session = Dep
         db.commit()
         raise HTTPException(403, "This account has been disabled. Contact your system administrator.")
 
-    # Password is right. Step 2: a code emailed to the account's address.
+    # Password is right.
     user.failed_login_count = 0
+
+    # "Keep me signed in" on a browser that already passed the emailed code: no code needed
+    device = trusted_device(db, request, user) if data.remember_me else None
+    if device:
+        device.last_used_at = now
+        user.locked_until = None
+        user.last_login_at = now
+        start_session(db, request, response, user, remember_me=True)
+        log_event(db, request, "login_success", user=user, detail="remember me; trusted device, no code")
+        db.commit()
+        return token_response(user)
+    if not data.remember_me:
+        forget_device(db, request, response)  # box unticked: this browser needs the code again
+
+    # Step 2: a code emailed to the account's address.
     if not user.email:
         db.commit()
         raise HTTPException(403, "This account has no email address, so a sign-in code cannot be sent. "
@@ -683,6 +767,7 @@ def logout_all(request: Request, response: Response, user: models.User = Depends
                db: Session = Depends(get_db)):
     """Sign out on every device; existing access tokens stop working immediately."""
     revoke_all_sessions(db, user)
+    revoke_trusted_devices(db, user)
     user.token_version += 1
     log_event(db, request, "logout_all", user=user)
     db.commit()
@@ -774,6 +859,7 @@ def change_password(data: ChangePasswordIn, request: Request, response: Response
     user.password_changed_at = utcnow()
     user.token_version += 1                      # old access tokens everywhere stop working
     revoke_all_sessions(db, user)                # sign out other devices...
+    revoke_trusted_devices(db, user)             # ...and every browser needs the emailed code again
     start_session(db, request, response, user, remember)  # ...but keep this one signed in
     log_event(db, request, "password_changed", user=user, detail="other sessions signed out")
     db.commit()
@@ -857,6 +943,7 @@ def reset_password(data: ResetPasswordIn, request: Request, db: Session = Depend
         user.email_verified_at = utcnow()
     reset.used_at = utcnow()
     revoke_all_sessions(db, user)
+    revoke_trusted_devices(db, user)
     log_event(db, request, "password_reset", user=user, detail="all sessions signed out")
     db.commit()
     return {"message": "Your password has been reset. You can now sign in with the new password."}

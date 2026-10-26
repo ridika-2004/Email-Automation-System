@@ -12,6 +12,7 @@ CREATE TABLE users (
   username            VARCHAR(30)  NOT NULL UNIQUE,      -- lowercase
   email               VARCHAR(254) NULL UNIQUE,          -- lowercase; used for sign-in and password reset
   full_name           VARCHAR(100) NOT NULL DEFAULT '',
+  role                VARCHAR(10)  NOT NULL DEFAULT 'user',   -- admin / user
   email_verified      BOOLEAN NOT NULL DEFAULT FALSE,    -- proven with an emailed code; needed to sign in
   email_verified_at   DATETIME NULL,
   pending_email       VARCHAR(254) NULL,                 -- new address waiting for its confirmation code
@@ -109,6 +110,19 @@ CREATE TABLE partner_emails (
   FOREIGN KEY (partner_id) REFERENCES partners(id)
 );
 
+CREATE TABLE trusted_devices (   -- "Keep me signed in": password only, no emailed code
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  user_id      INT          NOT NULL,
+  token_hash   VARCHAR(64)  NOT NULL UNIQUE,
+  user_agent   VARCHAR(255) NOT NULL DEFAULT '',
+  ip_address   VARCHAR(45)  NOT NULL DEFAULT '',
+  created_at   DATETIME     NOT NULL,
+  last_used_at DATETIME     NOT NULL,
+  expires_at   DATETIME     NOT NULL,
+  revoked_at   DATETIME     NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE uploads (
   id           INT AUTO_INCREMENT PRIMARY KEY,
   filename     VARCHAR(255) NOT NULL,
@@ -149,11 +163,15 @@ CREATE TABLE email_dispatches (
   is_edited    BOOLEAN NOT NULL DEFAULT FALSE,              -- manually edited in the UI
   txn_count    INT NOT NULL,
   total_amount DECIMAL(14,2) NOT NULL,
-  status       VARCHAR(20) NOT NULL DEFAULT 'PREPARED',  -- PREPARED / SENT / FAILED
+  status       VARCHAR(20) NOT NULL DEFAULT 'PREPARED',  -- PREPARED / PENDING / SENDING / SENT / FAILED
   attempts     INT NOT NULL DEFAULT 0,
   error        TEXT NULL,
   sent_at      DATETIME NULL,
   delivery_issues TEXT NULL,                              -- JSON: recipients the mail server refused
+  submitted_by VARCHAR(30) NULL,                          -- user who sent it for approval
+  submitted_at DATETIME NULL,
+  sent_by      VARCHAR(30) NULL,                          -- admin who sent it
+  sending_since DATETIME NULL,                            -- claimed by an admin (no double sending)
   UNIQUE (upload_id, partner_id),   -- one email per partner per upload, never duplicated
   FOREIGN KEY (upload_id)  REFERENCES uploads(id),
   FOREIGN KEY (partner_id) REFERENCES partners(id)

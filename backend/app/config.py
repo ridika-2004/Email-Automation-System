@@ -63,6 +63,9 @@ PASSWORD_RESET_MINUTES = int(os.getenv("PASSWORD_RESET_MINUTES", "30"))
 # (signed-in users can still create accounts for others). The first account is always allowed.
 ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "true").lower() == "true"
 
+# Roles: "admin" or "user". Creating an admin account needs this code (only admins should know it).
+ADMIN_SIGNUP_CODE = os.getenv("ADMIN_SIGNUP_CODE", "1234")
+
 # Real email addresses only
 EMAIL_DNS_CHECK = os.getenv("EMAIL_DNS_CHECK", "true").lower() == "true"     # domain must have a mail server
 VERIFICATION_CODE_MINUTES = int(os.getenv("VERIFICATION_CODE_MINUTES", "15"))  # emailed 6-digit code
