@@ -177,7 +177,16 @@ export const api = {
   prepareEmails: (uploadId) => request(`/api/uploads/${uploadId}/prepare-emails`, { method: "POST" }),
   editEmail: (id, email) => request(`/api/emails/${id}`, json("PUT", email)),
   discardEmailEdits: (id) => request(`/api/emails/${id}/edits`, { method: "DELETE" }),
-  sendEmails: (uploadId) => request(`/api/uploads/${uploadId}/send`, { method: "POST" }),
+  // users: drafts -> pending (waits for an admin)
+  submitEmails: (uploadId) => request(`/api/uploads/${uploadId}/submit`, { method: "POST" }),
+  pendingEmails: () => request("/api/pending-emails"),
+  // filters: { q, partner_id, sort: "newest" | "oldest" }
+  sentEmails: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "" && v != null));
+    return request(`/api/sent-emails?${params}`);
+  },
+  // admins only: send the ticked pending emails
+  sendSelected: (ids) => request("/api/pending-emails/send", json("POST", { ids })),
 };
 
 export const formatAmount = (n) =>

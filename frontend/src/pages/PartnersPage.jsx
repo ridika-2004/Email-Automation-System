@@ -3,7 +3,7 @@ import { api, formatDateTime } from "../api";
 
 const EMPTY_FORM = { institution_code: "", name: "", is_active: true, emails: [{ email: "", is_active: true }] };
 
-export default function PartnersPage() {
+export default function PartnersPage({ isAdmin }) {
   const [partners, setPartners] = useState([]);
   const [form, setForm] = useState(null);     // null = form closed
   const [editingId, setEditingId] = useState(null);
@@ -67,9 +67,10 @@ export default function PartnersPage() {
             <p className="muted small">
               Only active partners with at least one active email address receive emails. Addresses marked
               Refused were rejected by the mail server and are left out until you fix or clear them.
+              {!isAdmin && <b> Only admins can add or change partners.</b>}
             </p>
           </div>
-          <button className="btn primary" onClick={openNew}>+ Add partner</button>
+          {isAdmin && <button className="btn primary" onClick={openNew}>+ Add partner</button>}
         </div>
 
         {notice && <div className="alert success">{notice}</div>}
@@ -95,10 +96,14 @@ export default function PartnersPage() {
                   <span className={`badge ${p.is_active ? "green" : "gray"}`}>{p.is_active ? "Active" : "Inactive"}</span>
                 </td>
                 <td className="actions">
-                  <button className="btn small" onClick={() => openEdit(p)}>Edit</button>
-                  <button className="btn small" onClick={() => toggleActive(p)}>
-                    {p.is_active ? "Deactivate" : "Activate"}
-                  </button>
+                  {isAdmin && (
+                    <>
+                      <button className="btn small" onClick={() => openEdit(p)}>Edit</button>
+                      <button className="btn small" onClick={() => toggleActive(p)}>
+                        {p.is_active ? "Deactivate" : "Activate"}
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -106,7 +111,7 @@ export default function PartnersPage() {
         </table>
       </section>
 
-      {form && (
+      {form && isAdmin && (
         <section className="card">
           <h2>{editingId ? "Edit partner" : "Add partner"}</h2>
           <form onSubmit={save} className="form">

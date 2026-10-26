@@ -143,8 +143,13 @@ function LoginForm({ rememberDays, onSignedIn, onForgot, onNeedsCode }) {
     e.preventDefault();
     if (!login.trim() || !password) return;
     run(async () => {
-      // Right password: a code was emailed, sign-in finishes on the code screen
       const data = await api.login(login, password, remember);
+      // Trusted browser ("Keep me signed in" earlier): the password was enough
+      if (data.access_token) {
+        signedIn(data, onSignedIn);
+        return;
+      }
+      // Otherwise a code was emailed, and sign-in finishes on the code screen
       onNeedsCode({ login: data.login, email: data.email, remember, message: data.message });
     });
   }
@@ -165,7 +170,10 @@ function LoginForm({ rememberDays, onSignedIn, onForgot, onNeedsCode }) {
       </label>
       <label className="auth-check">
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-        Keep me signed in for {rememberDays} days
+        <span>
+          Keep me signed in for {rememberDays} days
+          <small className="muted block">On this browser, later sign-ins need only your password, no email code.</small>
+        </span>
       </label>
       <button className="btn primary auth-submit" disabled={busy || !login.trim() || !password}>
         {busy ? "Signing in..." : "Sign in"}
@@ -177,7 +185,7 @@ function LoginForm({ rememberDays, onSignedIn, onForgot, onNeedsCode }) {
 // ---------------------------------------------------------------- create account
 
 function RegisterForm({ onRegistered }) {
-  const [form, setForm] = useState({ full_name: "", username: "", email: "", password: "" });
+  const [form, setForm] = useState({ full_name: "", username: "", email: "", password: "", role: "user", admin_code: "" });
   const [confirm, setConfirm] = useState("");
   const [touched, setTouched] = useState({});
   const { busy, error, run } = useSubmit();
@@ -192,7 +200,8 @@ function RegisterForm({ onRegistered }) {
   };
   const strength = checkPassword(form.password, { username, email: form.email });
   const confirmOk = confirm === form.password;
-  const canSubmit = !problems.full_name && !problems.username && !problems.email && strength.valid && confirm && confirmOk;
+  const needsCode = form.role === "admin" && !form.admin_code.trim();
+  const canSubmit = !problems.full_name && !problems.username && !problems.email && strength.valid && confirm && confirmOk && !needsCode;
 
   function submit(e) {
     e.preventDefault();
@@ -229,6 +238,20 @@ function RegisterForm({ onRegistered }) {
           {fieldError("email")}
         </label>
       </div>
+      <label className="auth-field">
+        <span>Role</span>
+        <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value, admin_code: "" }))}>
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+      </label>
+      {form.role === "admin" && (
+        <label className="auth-field">
+          <span>Admin code</span>
+          <PasswordInput value={form.admin_code} onChange={set("admin_code")} autoComplete="off" />
+          <small className="muted">Only admins know this code. Without it, choose User.</small>
+        </label>
+      )}
       <label className="auth-field">
         <span>Password</span>
         <PasswordInput value={form.password} onChange={set("password")} autoComplete="new-password" />

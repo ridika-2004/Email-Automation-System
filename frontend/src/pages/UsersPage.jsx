@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, describeDevice, formatDateTime } from "../api";
 import { checkPassword, PasswordInput, PasswordStrength } from "../components/Password";
-import { EVENT_LABELS } from "./AccountPage";
+import { EVENT_LABELS, RoleBadge } from "./AccountPage";
 
-const EMPTY_USER = { full_name: "", username: "", email: "", password: "" };
+const EMPTY_USER = { full_name: "", username: "", email: "", password: "", role: "user", admin_code: "" };
 
 // Time left on a lock as "14:05", or null once it has run out
 function lockTimeLeft(lockedUntil, now) {
@@ -13,7 +13,7 @@ function lockTimeLeft(lockedUntil, now) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-// Every signed-in user can create accounts, unlock locked ones and read the security audit log (there are no roles)
+// Admins only: create accounts, unlock locked ones and read the security audit log
 export default function UsersPage({ currentUser }) {
   const [users, setUsers] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -60,7 +60,7 @@ export default function UsersPage({ currentUser }) {
         )}
         <table className="table">
           <thead>
-            <tr><th>Name</th><th>Username</th><th>Email</th><th>Status</th><th>Last sign-in</th><th /></tr>
+            <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th><th /></tr>
           </thead>
           <tbody>
             {users.map((u) => {
@@ -73,6 +73,7 @@ export default function UsersPage({ currentUser }) {
                   <td className="small">
                     {u.email || <span className="muted">none</span>}
                   </td>
+                  <td><RoleBadge role={u.role} /></td>
                   <td>
                     {timeLeft
                       ? <span className="badge red" title={`Unlocks automatically at ${formatDateTime(u.locked_until)}`}>Locked</span>
@@ -106,7 +107,8 @@ function CreateUserForm({ onCreated }) {
   const [error, setError] = useState("");
   const set = (field) => (value) => setForm((f) => ({ ...f, [field]: value }));
   const strength = checkPassword(form.password, { username: form.username, email: form.email });
-  const canSubmit = form.full_name.trim().length >= 2 && form.username.trim().length >= 3 && form.email.includes("@") && strength.valid;
+  const canSubmit = form.full_name.trim().length >= 2 && form.username.trim().length >= 3 && form.email.includes("@") && strength.valid
+    && (form.role !== "admin" || form.admin_code.trim());
 
   async function submit(e) {
     e.preventDefault();
@@ -137,6 +139,19 @@ function CreateUserForm({ onCreated }) {
         <small className="muted">Share it securely; the user can change it under My account.</small>
       </label>
       {form.password && <PasswordStrength password={form.password} username={form.username} email={form.email} />}
+      <div className="form-row">
+        <label>Role
+          <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value, admin_code: "" }))}>
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        {form.role === "admin" && (
+          <label>Admin code
+            <PasswordInput value={form.admin_code} onChange={set("admin_code")} autoComplete="off" />
+          </label>
+        )}
+      </div>
       <div><button className="btn primary" disabled={busy || !canSubmit}>{busy ? "Creating..." : "Create user"}</button></div>
     </form>
   );

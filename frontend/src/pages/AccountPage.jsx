@@ -21,6 +21,7 @@ export const EVENT_LABELS = {
   admin_user_updated: "Updated a user",
   user_created: "Created a user",
   user_updated: "Updated a user",
+  admin_code_failed: "Wrong admin code",
   email_verified: "Email verified",
   verification_sent: "Verification code sent",
   login_code_sent: "Sign-in code sent",
@@ -69,6 +70,7 @@ function ProfileCard({ user, onUserChange }) {
       <h2>Profile</h2>
       <dl className="facts">
         <dt>Username</dt><dd>{user.username}</dd>
+        <dt>Role</dt><dd><RoleBadge role={user.role} /></dd>
         <dt>Email</dt>
         <dd>
           {user.email || "—"}
@@ -287,4 +289,8 @@ function ActivityCard() {
       </table>
     </section>
   );
+}
+
+export function RoleBadge({ role }) {
+  return <span className={`badge ${role === "admin" ? "blue" : "gray"}`}>{role === "admin" ? "Admin" : "User"}</span>;
 }

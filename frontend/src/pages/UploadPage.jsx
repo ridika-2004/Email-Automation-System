@@ -67,8 +67,8 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
         )}
 
         <div className="template-download">
-          <button type="button" className="btn" onClick={handleDownloadTemplate}>
-            Download sample template (.xlsx)
+          <button type="button" className="btn download" onClick={handleDownloadTemplate}>
+            <DownloadIcon /> Download sample template (.xlsx)
           </button>
         </div>
 
@@ -98,16 +98,25 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
           <h2>Validation result — {result.filename}</h2>
           <div className="stats">
             <Stat label="Rows in file" value={result.total_rows} />
-            <Stat label="Valid rows" value={result.valid_rows} />
-            <Stat label="Unknown response" value={result.unknown_rows} highlight />
             <div className="stat-with-action">
-              <Stat label="Skipped (errors)" value={result.skipped_rows ?? 0} danger={result.skipped_rows > 0} />
-              {result.skipped_rows > 0 && (
-                <button type="button" className="btn grey" onClick={() => handleDownloadRows("faulty")}>
-                  Download skipped transactions
+              <Stat label="Valid rows" value={result.valid_rows} />
+              {result.valid_rows > 0 && (
+                <button type="button" className="btn download" onClick={() => handleDownloadRows("valid")}
+                  title="Download the valid rows as an Excel file">
+                  <DownloadIcon /> Successful transactions
                 </button>
               )}
             </div>
+            <div className="stat-with-action">
+              <Stat label="Unknown response" value={result.unknown_rows} highlight />
+              {result.skipped_rows > 0 && (
+                <button type="button" className="btn download" onClick={() => handleDownloadRows("faulty")}
+                  title="Download the skipped rows as an Excel file">
+                  <DownloadIcon /> Skipped transactions
+                </button>
+              )}
+            </div>
+            <Stat label="Skipped (errors)" value={result.skipped_rows ?? 0} danger={result.skipped_rows > 0} />
           </div>
 
           {result.row_errors?.length > 0 && (
@@ -132,6 +141,17 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
         </section>
       )}
     </div>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
   );
 }
 

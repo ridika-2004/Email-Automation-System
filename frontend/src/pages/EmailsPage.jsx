@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatAmount } from "../api";
+import Modal from "../components/Modal";
 
-export default function EmailsPage({ uploadId, config }) {
+// Users prepare and edit the emails here. Their "Send" puts them in Pending Mails, where an admin sends them.
+export default function EmailsPage({ uploadId, config, onOpenPending }) {
   const [emails, setEmails] = useState([]);
   const [warnings, setWarnings] = useState([]);   // partners that got no email
   const [notices, setNotices] = useState([]);     // partners whose failed addresses were left out
   const [selectedId, setSelectedId] = useState(null);
   const [busy, setBusy] = useState("");            // "preparing" | "sending" | ""
+  const [submitted, setSubmitted] = useState(0);   // > 0: show the "pending" pop-up
   const [message, setMessage] = useState(null);    // { type, text }
   const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
 
@@ -32,17 +35,12 @@ export default function EmailsPage({ uploadId, config }) {
   }
 
   async function send() {
-    const count = emails.filter(isPending).length;
-    if (!window.confirm(`Send ${count} email(s) now?`)) return;
     setBusy("sending");
     setMessage(null);
     try {
-      const data = await api.sendEmails(uploadId);
+      const data = await api.submitEmails(uploadId);
       setEmails(data.emails);
-      setMessage({
-        type: data.failed ? "warning" : "success",
-        text: `${data.sent} email(s) sent successfully, ${data.failed} failed.`,
-      });
+      setSubmitted(data.submitted);
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     } finally {
@@ -61,7 +59,7 @@ export default function EmailsPage({ uploadId, config }) {
   }
 
   const selected = emails.find((e) => e.id === selectedId);
-  const pendingCount = emails.filter(isPending).length;
+  const draftCount = emails.filter(isDraft).length;
 
   return (
     <div className="page">
@@ -70,8 +68,8 @@ export default function EmailsPage({ uploadId, config }) {
           <div>
             <h2>Prepared emails ({emails.length})</h2>
             <p className="muted small">
-              One consolidated email per partner. Sending through test SMTP{" "}
-              <b>{config ? `${config.smtp_host}:${config.smtp_port}` : ""}</b>.
+              One consolidated email per partner. Check and edit them, then press Send:
+              they go to <b>Pending Mails</b> and an admin sends them to the partners.
             </p>
           </div>
           <div className="actions">
@@ -81,12 +79,12 @@ export default function EmailsPage({ uploadId, config }) {
             <button
               className="btn primary"
               onClick={send}
-              disabled={!!busy || pendingCount === 0 || hasUnsavedEdits}
-              title={hasUnsavedEdits ? "Save or discard your edits first" : ""}
+              disabled={!!busy || draftCount === 0 || hasUnsavedEdits}
+              title={hasUnsavedEdits ? "Save or discard your edits first" : "Sends them to an admin for approval"}
             >
               {busy === "sending" ? "Sending..."
-                : pendingCount === 0 && emails.length ? "All emails sent"
-                : `Send ${pendingCount} email(s)`}
+                : draftCount === 0 && emails.length ? "Nothing left to send"
+                : `Send ${draftCount} email(s)`}
             </button>
           </div>
         </div>
@@ -129,10 +127,12 @@ export default function EmailsPage({ uploadId, config }) {
                 <td className="num">{formatAmount(e.total_amount)}</td>
                 <td>
                   <StatusBadge status={e.status} />{" "}
-                  {e.is_edited && isPending(e) && <span className="badge gray">EDITED</span>}
+                  {e.is_edited && e.status !== "SENT" && <span className="badge gray">EDITED</span>}
                 </td>
                 <td className="small">
-                  {e.status === "SENT" && `Sent ${new Date(e.sent_at).toLocaleString()}`}
+                  {e.status === "PENDING" && `Waiting for an admin (sent for approval by ${e.submitted_by_name})`}
+                  {e.status === "SENDING" && `Being sent by ${e.sent_by_name}`}
+                  {e.status === "SENT" && `Sent ${new Date(e.sent_at).toLocaleString()}${e.sent_by_name ? ` by ${e.sent_by_name}` : ""}`}
                   {e.status === "FAILED" && <div className="text-red">{e.error}</div>}
                   {e.delivery_issues.map((i) => (
                     <div key={i.email} className="text-red" title={i.reason}>Refused: {i.email}</div>
@@ -155,21 +155,36 @@ export default function EmailsPage({ uploadId, config }) {
           onDirtyChange={setHasUnsavedEdits}
         />
       )}
+
+      {submitted > 0 && (
+        <Modal
+          title="Sent for approval"
+          onClose={() => setSubmitted(0)}
+          actions={<>
+            <button className="btn" onClick={() => setSubmitted(0)}>OK</button>
+            <button className="btn primary" onClick={() => { setSubmitted(0); onOpenPending(); }}>View Pending Mails</button>
+          </>}
+        >
+          <p><b>{submitted} email(s) are now pending.</b></p>
+          <p>An admin will review them and send them to the partners. You can follow them in the Pending Mails tab.</p>
+        </Modal>
+      )}
     </div>
   );
 }
 
-// Emails the Send button will send. SENT ones are never sent again.
-const isPending = (e) => e.status === "PREPARED" || e.status === "FAILED";
+// Drafts: what the Send button sends for approval. PENDING / SENT / FAILED ones are with an admin or done.
+const isDraft = (e) => e.status === "PREPARED";
 
-function StatusBadge({ status }) {
-  const color = { SENT: "green", FAILED: "red", PREPARED: "blue" }[status] || "gray";
+export function StatusBadge({ status }) {
+  const color = { SENT: "green", FAILED: "red", PREPARED: "blue", PENDING: "amber", SENDING: "blue" }[status] || "gray";
   return <span className={`badge ${color}`}>{status}</span>;
 }
 
 // Preview card with an Edit / Preview toggle. Edits stay a local draft
 // until "Save changes"; the Preview tab shows the draft as it will be sent.
-function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyChange }) {
+// canEdit: drafts can be edited by their user; emails waiting for approval only by admins.
+export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyChange, canEdit = email.status === "PREPARED" }) {
   const [mode, setMode] = useState("preview");     // "preview" | "edit"
   const [draft, setDraft] = useState(null);         // { subject, body_html } while editing
   const [editorSeed, setEditorSeed] = useState(""); // HTML loaded into the editor when it opens
@@ -177,7 +192,7 @@ function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyChange }
   const [error, setError] = useState("");
   const editorRef = useRef(null);
 
-  const isSent = email.status === "SENT";
+  const isSent = !canEdit || email.status === "SENT";
   const dirty = !!draft && (draft.subject !== email.subject || draft.body_html !== email.body_html);
   const shown = draft || email;
 
@@ -271,7 +286,9 @@ function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyChange }
               className={mode === "edit" ? "active" : ""}
               onClick={openEditor}
               disabled={isSent}
-              title={isSent ? "Sent emails cannot be edited" : "Edit subject and body"}
+              title={!isSent ? "Edit subject and body"
+                : email.status === "SENT" ? "Sent emails cannot be edited"
+                : email.status === "PREPARED" ? "Edit subject and body" : "Waiting for an admin: only admins can edit it now"}
             >
               Edit
             </button>

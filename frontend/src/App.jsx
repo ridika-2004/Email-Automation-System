@@ -7,12 +7,23 @@ import UploadPage from "./pages/UploadPage";
 import GroupsPage from "./pages/GroupsPage";
 import EmailsPage from "./pages/EmailsPage";
 import PartnersPage from "./pages/PartnersPage";
+import PendingPage from "./pages/PendingPage";
+import SentPage from "./pages/SentPage";
 
-const TABS = [
+// Users prepare the emails; admins send them from Pending Mails and manage partners and users
+const USER_TABS = [
   { id: "upload", label: "1. Upload File" },
   { id: "groups", label: "2. Grouped Transactions" },
   { id: "emails", label: "3. Email Preview & Send" },
+  { id: "pending", label: "Pending Mails" },
+  { id: "sent", label: "Sent Mails" },
   { id: "partners", label: "Partner Configuration" },
+];
+const ADMIN_TABS = [
+  { id: "pending", label: "Pending Mails" },
+  { id: "sent", label: "Sent Mails" },
+  { id: "partners", label: "Partner Configuration" },
+  { id: "users", label: "Users & Security" },
 ];
 
 const hasResetLink = () => new URLSearchParams(window.location.search).has("reset_token");
@@ -65,7 +76,9 @@ export default function App() {
 }
 
 function MainApp({ user, onUserChange, onSignOut }) {
-  const [tab, setTab] = useState("upload");
+  const isAdmin = user.role === "admin";
+  const tabs = isAdmin ? ADMIN_TABS : USER_TABS;
+  const [tab, setTab] = useState(tabs[0].id);
   const [upload, setUpload] = useState(null); // result of the last successful upload
   const [config, setConfig] = useState(null);
 
@@ -88,12 +101,12 @@ function MainApp({ user, onUserChange, onSignOut }) {
               SMTP: {config.smtp_host}:{config.smtp_port}
             </div>
           )}
-          <UserMenu user={user} onOpen={setTab} onSignOut={() => onSignOut()} />
+          <UserMenu user={user} isAdmin={isAdmin} onOpen={setTab} onSignOut={() => onSignOut()} />
         </div>
       </header>
 
       <nav className="tabs">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             className={tab === t.id ? "tab active" : "tab"}
@@ -104,14 +117,11 @@ function MainApp({ user, onUserChange, onSignOut }) {
             {t.label}
           </button>
         ))}
-        <button className={tab === "users" ? "tab active" : "tab"} onClick={() => setTab("users")}>
-          Users &amp; Security
-        </button>
         {upload && <span className="current-file">Current file: {upload.filename} (#{upload.upload_id})</span>}
       </nav>
 
       <main>
-        {tab === "upload" && (
+        {tab === "upload" && !isAdmin && (
           <UploadPage
             config={config}
             lastUpload={upload}
@@ -119,17 +129,21 @@ function MainApp({ user, onUserChange, onSignOut }) {
             onNext={() => setTab("groups")}
           />
         )}
-        {tab === "groups" && upload && <GroupsPage uploadId={upload.upload_id} onNext={() => setTab("emails")} />}
-        {tab === "emails" && upload && <EmailsPage uploadId={upload.upload_id} config={config} />}
-        {tab === "partners" && <PartnersPage />}
+        {tab === "groups" && upload && !isAdmin && <GroupsPage uploadId={upload.upload_id} onNext={() => setTab("emails")} />}
+        {tab === "emails" && upload && !isAdmin && (
+          <EmailsPage uploadId={upload.upload_id} config={config} onOpenPending={() => setTab("pending")} />
+        )}
+        {tab === "pending" && <PendingPage config={config} isAdmin={isAdmin} />}
+        {tab === "sent" && <SentPage config={config} />}
+        {tab === "partners" && <PartnersPage isAdmin={isAdmin} />}
         {tab === "account" && <AccountPage user={user} onUserChange={onUserChange} onSignedOut={onSignOut} />}
-        {tab === "users" && <UsersPage currentUser={user} />}
+        {tab === "users" && isAdmin && <UsersPage currentUser={user} />}
       </main>
     </div>
   );
 }
 
-function UserMenu({ user, onOpen, onSignOut }) {
+function UserMenu({ user, isAdmin, onOpen, onSignOut }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -161,7 +175,7 @@ function UserMenu({ user, onOpen, onSignOut }) {
             <span className="muted small">{user.email || user.username}</span>
           </div>
           <button role="menuitem" onClick={pick(() => onOpen("account"))}>My account</button>
-          <button role="menuitem" onClick={pick(() => onOpen("users"))}>Users &amp; security</button>
+          {isAdmin && <button role="menuitem" onClick={pick(() => onOpen("users"))}>Users &amp; security</button>}
           <button role="menuitem" className="danger" onClick={pick(onSignOut)}>Sign out</button>
         </div>
       )}
