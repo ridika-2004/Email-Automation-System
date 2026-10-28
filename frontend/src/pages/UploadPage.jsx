@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
-import { Alert, DownloadIcon, btnCls, card, cx, h2, page, tableCompact } from "../components/ui";
+import { Alert, DownloadIcon, btnCls, card, cx, h2, page, tableCompact, scrollX } from "../components/ui";
 
 // The "Final_Report_for_DMS_Claim" format (same as backend/app/excel_parser.py REQUIRED_COLUMNS)
 const REQUIRED_COLUMNS = [
@@ -74,14 +74,14 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
           </button>
         </div>
 
-        <form onSubmit={handleUpload} className="mt-3.5 flex items-center gap-3">
+        <form onSubmit={handleUpload} className="mt-3.5 flex flex-wrap items-center gap-3">
           <input
-            className="rounded-md border border-dashed border-slate-300 bg-gray-50 p-2"
+            className="min-w-0 max-w-full rounded-md border border-dashed border-slate-300 bg-gray-50 p-2 max-[640px]:w-full"
             type="file"
             accept=".xlsx,.csv"
             onChange={(e) => setFile(e.target.files[0] || null)}
           />
-          <button className={btnCls("primary")} disabled={!file || loading}>
+          <button className={cx(btnCls("primary"), "whitespace-nowrap max-[640px]:w-full")} disabled={!file || loading}>
             {loading ? "Uploading..." : "Upload & Validate"}
           </button>
         </form>
@@ -125,7 +125,7 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
           {result.row_errors?.length > 0 && (
             <Alert type="warning">
               <b>{result.row_errors.length} row(s) were skipped. All other rows were imported.</b>
-              <table className={tableCompact}>
+              <div className={scrollX}><table className={tableCompact}>
                 <thead><tr><th>Excel Row</th><th>RRN</th><th>Problem</th></tr></thead>
                 <tbody>
                   {result.row_errors.map((r) => (
@@ -136,7 +136,7 @@ export default function UploadPage({ config, lastUpload, onUploaded, onNext }) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </Alert>
           )}
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, auth, describeDevice, formatDateTime } from "../api";
 import { checkPassword, PasswordInput, PasswordStrength } from "../components/Password";
 import { CodeInput, useResendTimer } from "./AuthPage";
-import { Alert, badge, btnCls, card, formCls, h2, input, link, num, page, table, tableCompact } from "../components/ui";
+import { Alert, badge, btnCls, card, formCls, h2, input, link, num, page, table, tableCompact, scrollX } from "../components/ui";
 
 export const EVENT_LABELS = {
   register: "Account created",
@@ -234,15 +234,15 @@ function SessionsCard({ onSignedOut }) {
 
   return (
     <section className={card}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_320px]">
           <h2 className={h2}>Where you're signed in</h2>
           <p className="text-xs text-muted">If you don't recognise a device, sign it out and change your password.</p>
         </div>
         <button className={btnCls()} onClick={signOutEverywhere}>Sign out everywhere</button>
       </div>
       {error && <Alert type="error">{error}</Alert>}
-      <table className={table}>
+      <div className={scrollX}><table className={table}>
         <thead><tr><th>Device</th><th>IP address</th><th>Signed in</th><th>Last active</th><th>Expires</th><th /></tr></thead>
         <tbody>
           {sessions.map((s) => (
@@ -261,7 +261,7 @@ function SessionsCard({ onSignedOut }) {
           ))}
           {!sessions.length && <tr><td colSpan={6} className="text-muted">No active sessions.</td></tr>}
         </tbody>
-      </table>
+      </table></div>
     </section>
   );
 }
@@ -273,7 +273,7 @@ function ActivityCard() {
   return (
     <section className={card}>
       <h2 className={h2}>Recent security activity</h2>
-      <table className={tableCompact}>
+      <div className={scrollX}><table className={tableCompact}>
         <thead><tr><th>When</th><th>Event</th><th>Details</th><th>Device</th><th>IP address</th></tr></thead>
         <tbody>
           {events.map((e) => (
@@ -287,7 +287,7 @@ function ActivityCard() {
           ))}
           {!events.length && <tr><td colSpan={5} className="text-muted">No activity yet.</td></tr>}
         </tbody>
-      </table>
+      </table></div>
     </section>
   );
 }

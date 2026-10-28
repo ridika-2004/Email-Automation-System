@@ -3,7 +3,7 @@ import { api, formatAmount, formatDateTime } from "../api";
 import MailTypeBadge from "../components/MailTypeBadge";
 import Modal from "../components/Modal";
 import { EmailPreview, StatusBadge } from "./EmailsPage";
-import { Alert, badge, btnCls, card, chevron, expandedCell, h2, num, page, rowCls, table } from "../components/ui";
+import { Alert, badge, btnCls, card, chevron, expandedCell, h2, num, page, rowCls, table, scrollX } from "../components/ui";
 
 // Emails users sent for approval (PENDING) and ones whose sending failed (FAILED), from every upload.
 // Everyone can see them; admins tick the ones to send, and can edit them first.
@@ -70,15 +70,15 @@ export default function PendingPage({ config, isAdmin }) {
   return (
     <div className={page}>
       <section className={card}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_320px]">
             <h2 className={h2}>Pending mails ({emails.length})</h2>
             <p className="text-xs text-muted">
               Emails sent for approval, from every uploaded file.{" "}
               {isAdmin ? "Tick the ones to send. Open one with ▸ to preview or edit it first." : "An admin reviews and sends them."}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button className={btnCls()} onClick={load} disabled={busy}>Refresh</button>
             {isAdmin && (
               <button className={btnCls("primary")} disabled={busy || !selected.size || !!dirtyId}
@@ -94,7 +94,7 @@ export default function PendingPage({ config, isAdmin }) {
         {!emails.length && <p className="text-muted">No pending mails.</p>}
 
         {emails.length > 0 && (
-          <table className={table}>
+          <div className={scrollX}><table className={table}>
             <thead>
               <tr>
                 {isAdmin && (
@@ -152,7 +152,7 @@ export default function PendingPage({ config, isAdmin }) {
                 </Fragment>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
 

@@ -45,7 +45,7 @@ export default function AdminHomePage({ onOpen }) {
 
       <section className={card}>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-[1_1_320px]">
             <h2 className={h2}>Automatic follow-ups</h2>
             <p className="text-muted">
               {auto

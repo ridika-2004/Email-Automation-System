@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatDateTime } from "../api";
-import { Alert, badge, btnCls, card, checkLabel, formCls, h2, input, page, table } from "../components/ui";
+import { Alert, badge, btnCls, card, checkLabel, formCls, h2, input, page, table, scrollX } from "../components/ui";
 
 const EMPTY_FORM = { name: "", is_active: true, emails: [{ email: "", is_active: true }] };
 
@@ -61,8 +61,8 @@ export default function PartnersPage({ isAdmin }) {
   return (
     <div className={page}>
       <section className={card}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_320px]">
             <h2 className={h2}>Partners</h2>
             <p className="text-xs text-muted">
               Rows of an uploaded file go to the partner whose name matches their KEY_ORG_NM.
@@ -76,7 +76,7 @@ export default function PartnersPage({ isAdmin }) {
 
         {notice && <Alert type="success">{notice}</Alert>}
 
-        <table className={table}>
+        <div className={scrollX}><table className={table}>
           <thead>
             <tr><th>Name (KEY_ORG_NM)</th><th>Recipient emails</th><th>Status</th><th></th></tr>
           </thead>
@@ -95,7 +95,7 @@ export default function PartnersPage({ isAdmin }) {
                 <td>
                   <span className={badge(p.is_active ? "green" : "gray")}>{p.is_active ? "Active" : "Inactive"}</span>
                 </td>
-                <td className="flex gap-2">
+                <td className="flex flex-wrap gap-2">
                   {isAdmin && (
                     <>
                       <button className={btnCls("default", "sm")} onClick={() => openEdit(p)}>Edit</button>
@@ -108,7 +108,7 @@ export default function PartnersPage({ isAdmin }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </section>
 
       {form && isAdmin && (
@@ -152,7 +152,7 @@ export default function PartnersPage({ isAdmin }) {
 
             {error && <Alert type="error">{error}</Alert>}
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button className={btnCls("primary")}>Save</button>
               <button type="button" className={btnCls()} onClick={() => setForm(null)}>Cancel</button>
             </div>

@@ -158,7 +158,7 @@ export default function EmailConfigPage({ isAdmin, onSaved }) {
               : settings.updated_at ? `Last changed by ${settings.updated_by_name} · ${formatDateTime(settings.updated_at)}`
                 : "Using the defaults from the server's .env file."}
           </span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button type="button" className={btnCls("default")} disabled={!dirty || saving}
               onClick={() => { setForm(toForm(settings)); setMessage(null); }}>Discard</button>
             <button className={btnCls("primary")} disabled={!dirty || saving}>{saving ? "Saving..." : "Save changes"}</button>

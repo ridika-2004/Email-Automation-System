@@ -35,7 +35,7 @@ export default function EmailActivity({ email, isAdmin }) {
 
   return (
     <section className={card}>
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <h3 className="text-[15px] font-bold">Follow-up history</h3>
         <span className="text-xs text-muted">
           Sent for approval by {email.submitted_by_name || "—"} · {formatDateTime(email.submitted_at)}

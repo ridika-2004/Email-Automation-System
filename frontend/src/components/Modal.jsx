@@ -10,9 +10,9 @@ export default function Modal({ title, children, actions, onClose, wide = false 
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/45 p-4"
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/45 p-4 max-[640px]:p-2"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={cx("w-full rounded-[10px] bg-white p-[22px] shadow-modal", wide ? "max-h-[92vh] max-w-[860px] overflow-y-auto" : "max-w-[480px]")}
+      <div className={cx("w-full rounded-[10px] bg-white p-[22px] shadow-modal max-[640px]:p-4", "max-h-[92vh] overflow-y-auto", wide ? "max-w-[860px]" : "max-w-[480px]")}
         role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <h2 id="modal-title" className="mb-2.5 text-base font-bold">{title}</h2>
         <div className="[&_p]:my-1.5 [&_p]:break-words">{children}</div>

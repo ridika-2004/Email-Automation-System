@@ -71,11 +71,11 @@ export function Alert({ type = "info", className = "my-3", as: Tag = "div", ...p
 }
 
 export function Card({ className = "", as: Tag = "section", ...props }) {
-  return <Tag className={cx("rounded-lg border border-line bg-white p-[18px]", className)} {...props} />;
+  return <Tag className={cx("min-w-0 rounded-lg border border-line bg-white p-[18px] max-[640px]:p-3.5", className)} {...props} />;
 }
 
 // Page section title (h2)
-export const h2 = "mb-2 text-base font-bold";
+export const h2 = "mb-2 break-words text-base font-bold"; // long file names wrap on phones
 
 // ---------------------------------------------------------------- form fields
 
@@ -89,8 +89,9 @@ export const label = "flex flex-col gap-1 text-[13px] font-semibold";
 // ---------------------------------------------------------------- tables
 
 // Only the table's own cells are styled (nested tables keep theirs). Put `num` on number cells.
+// On phones the columns keep a readable width (the table scrolls inside scrollX)
 export const table =
-  "my-3 w-full border-collapse " +
+  "my-3 w-full border-collapse max-[640px]:min-w-[600px] " +
   "[&>thead>tr>th]:border-b [&>thead>tr>th]:border-line [&>thead>tr>th]:bg-gray-50 [&>thead>tr>th]:px-2.5 " +
   "[&>thead>tr>th]:py-2 [&>thead>tr>th]:text-left [&>thead>tr>th]:align-top [&>thead>tr>th]:text-xs " +
   "[&>thead>tr>th]:font-semibold [&>thead>tr>th]:uppercase [&>thead>tr>th]:text-muted " +
@@ -98,7 +99,7 @@ export const table =
   "[&>tfoot>tr>td]:border-t-2 [&>tfoot>tr>td]:border-line [&>tfoot>tr>td]:px-2.5 [&>tfoot>tr>td]:py-2";
 
 export const tableCompact =
-  "my-3 w-full border-collapse text-xs " +
+  "my-3 w-full border-collapse text-xs max-[640px]:min-w-[480px] " +
   "[&>thead>tr>th]:border-b [&>thead>tr>th]:border-line [&>thead>tr>th]:bg-gray-50 [&>thead>tr>th]:px-2 " +
   "[&>thead>tr>th]:py-1.5 [&>thead>tr>th]:text-left [&>thead>tr>th]:font-semibold [&>thead>tr>th]:uppercase " +
   "[&>thead>tr>th]:text-muted [&>tbody>tr>td]:border-b [&>tbody>tr>td]:border-line [&>tbody>tr>td]:px-2 " +
@@ -106,11 +107,17 @@ export const tableCompact =
 
 export const num = "!text-right";
 
+// Wraps every table: on a narrow screen the table scrolls sideways inside its card instead of widening the page
+export const scrollX = "max-w-full overflow-x-auto";
+
 // Clickable table row; `selected` highlights it
 export const rowCls = (selected) => cx("cursor-pointer hover:bg-gray-50", selected && "!bg-rose-50");
 
 // Cell of an expanded row (preview under a row)
-export const expandedCell = "!bg-gray-50 !p-3 [&>*+*]:mt-3";
+// On phones the table is wider than the screen (it scrolls): what opens under a row keeps the
+// screen's width and stays in view (page gutter 2x16px + card 2x14px + cell 2x12px = 84px)
+export const expandedCell = "!bg-gray-50 !p-3 [&>*+*]:mt-3 " +
+  "max-[640px]:[&>*]:sticky max-[640px]:[&>*]:left-3 max-[640px]:[&>*]:w-[calc(100vw-84px)]";
 
 export const chevron = "w-6 text-sm text-muted";
 
@@ -118,7 +125,7 @@ export const chevron = "w-6 text-sm text-muted";
 export const page = "flex flex-col gap-4";
 
 // Class strings for places that can't use the components above
-export const card = "rounded-lg border border-line bg-white p-[18px]";
+export const card = "min-w-0 rounded-lg border border-line bg-white p-[18px] max-[640px]:p-3.5";
 export const btnCls = (variant = "default", size = "md") =>
   cx("cursor-pointer rounded-md disabled:cursor-not-allowed disabled:opacity-50", BUTTON[variant],
     variant === "download" || variant === "link" ? "" : SIZE[size]);
