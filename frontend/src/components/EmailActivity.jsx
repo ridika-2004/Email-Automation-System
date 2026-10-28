@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatDateTime } from "../api";
+import { EmailView } from "./EmailHtml";
 import { Alert, btnCls, card, cx, link } from "./ui";
 
 const STATUS_LABELS = { not_received: "Awaiting reply", received: "Reply received", reconciled: "Reconciled" };
@@ -71,7 +72,7 @@ export default function EmailActivity({ email, isAdmin }) {
                   {openEvent === ev.id && (
                     <div className="mt-1.5">
                       <div className="text-xs"><b>Subject:</b> {ev.subject}</div>
-                      <iframe title="Follow-up email" className="mt-1 h-[300px] w-full rounded-md border border-line bg-white" srcDoc={ev.body_html} sandbox="" />
+                      <EmailView className="mt-1 h-[300px]" html={ev.body_html} />
                     </div>
                   )}
                 </>
