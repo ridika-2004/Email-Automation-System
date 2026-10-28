@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatDateTime } from "../api";
+import { EmailEditor, EmailView } from "../components/EmailHtml";
 import MailTypeBadge, { MAIL_TYPE_LABELS } from "../components/MailTypeBadge";
 import { Alert, badge, btnCls, card, checkLabel, cx, h2, input, label, page, table } from "../components/ui";
 
@@ -7,18 +8,15 @@ import { Alert, badge, btnCls, card, checkLabel, cx, h2, input, label, page, tab
 // another can be picked for each email on the Email Preview & Send page.
 
 const MAIL_TYPES = ["inward", "outward"];
-const P = '<p style="margin:0 0 12px">';
+// Plain paragraphs: the backend adds the email's spacing when it builds the email
 const STARTER_BODY =
-  `${P}Dear Concern,</p>${P}Assalamualaikum.</p>${P}Please find attached the {{txn_count}} transaction(s) ` +
-  `dated {{date}}.</p>${P}Thank you for your continued cooperation and support.</p>` +
+  "<p>Dear Concern,</p><p>Assalamualaikum.</p><p>Please find attached the {{txn_count}} transaction(s) " +
+  "dated {{date}}.</p><p>Thank you for your continued cooperation and support.</p>" +
   "<p>Regards<br/>Reconciliation<br/>Nagad Limited</p>";
 const EMPTY_FORM = { name: "", mail_type: "inward", description: "", subject: "", body_html: STARTER_BODY, is_default: false };
 
 // Values shown in the preview instead of the placeholders
 const SAMPLE = { partner_name: "bKash", date: "02 Sep 2026", txn_count: "12", total_amount: "245,500.00" };
-// The app wraps every email body in this (same as the backend's BODY_WRAP)
-const BODY_STYLE = "font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.45";
-
 const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 // The template with the sample values filled in, as a partner would see it
@@ -171,7 +169,6 @@ const toggleBtn = (active) => cx("px-3.5 py-1.5 text-[13px]", active ? "bg-brand
 function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, onSaved, onCancel }) {
   const [form, setForm] = useState(initial);
   const [mode, setMode] = useState("edit");         // "edit" | "preview"
-  const [editorSeed, setEditorSeed] = useState(initial.body_html);
   const [lastField, setLastField] = useState("body"); // where a placeholder button inserts
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -180,20 +177,6 @@ function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, on
 
   const set = (changes) => setForm((f) => ({ ...f, ...changes }));
 
-  function switchMode(next) {
-    if (next === "edit") setEditorSeed(form.body_html);
-    setMode(next);
-  }
-
-  // Make the iframe editable (WYSIWYG) and copy every change into the form
-  function onEditorLoad() {
-    const doc = editorRef.current?.contentDocument;
-    if (!doc) return;
-    doc.designMode = "on";
-    doc.addEventListener("input", () => set({ body_html: doc.body.innerHTML }));
-    doc.addEventListener("mousedown", () => setLastField("body"));
-    editorRef.current.contentWindow.addEventListener("focus", () => setLastField("body"));
-  }
 
   function insert(name) {
     const text = `{{${name}}}`;
@@ -205,12 +188,11 @@ function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, on
       requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + text.length, start + text.length); });
       return;
     }
-    const frame = editorRef.current;
-    const doc = frame?.contentDocument;
-    if (!doc) return;
-    frame.contentWindow.focus();
-    doc.execCommand("insertText", false, text);
-    set({ body_html: doc.body.innerHTML });
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    document.execCommand("insertText", false, text);
+    set({ body_html: editor.innerHTML });
   }
 
   async function save(e) {
@@ -227,12 +209,11 @@ function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, on
     }
   }
 
-  const editorDoc = (body) =>
-    `<!doctype html><html><head><style>body{${BODY_STYLE};margin:12px}</style></head><body>${body}</body></html>`;
-
   return (
     <section className={card}>
-      <h2 className={h2}>{editingId ? "Edit template" : "New template"}</h2>
+      <h2 className={h2}>
+        {editingId ? "Edit this template" : "New template"}
+      </h2>
       <form onSubmit={save} className="flex flex-col gap-3">
         <div className="grid gap-3 min-[720px]:grid-cols-[2fr_1fr]">
           <label className={label}>
@@ -287,19 +268,15 @@ function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, on
           <div className="mb-1.5 flex items-center justify-between">
             <span className="text-[13px] font-semibold">Body</span>
             <div className="inline-flex overflow-hidden rounded-md border border-line [&>button+button]:border-l [&>button+button]:border-line">
-              <button type="button" className={toggleBtn(mode === "edit")} onClick={() => switchMode("edit")}>Edit</button>
-              <button type="button" className={toggleBtn(mode === "preview")} onClick={() => switchMode("preview")}>Preview with sample data</button>
+              <button type="button" className={toggleBtn(mode === "edit")} onClick={() => setMode("edit")}>Edit</button>
+              <button type="button" className={toggleBtn(mode === "preview")} onClick={() => setMode("preview")}>Preview with sample data</button>
             </div>
           </div>
-          {/* Different keys give a new iframe on each switch (see EmailPreview) */}
           {mode === "edit" ? (
-            <iframe key="editor" ref={editorRef} title="Template body editor" sandbox="allow-same-origin"
-              className="h-[420px] w-full rounded-md border border-line bg-white outline outline-2 -outline-offset-1 outline-brand"
-              srcDoc={editorDoc(editorSeed)} onLoad={onEditorLoad} />
+            <EmailEditor key="editor" editorRef={editorRef} className="h-[420px]" label="Template body" html={form.body_html}
+              onFocus={() => setLastField("body")} onChange={(html) => set({ body_html: html })} />
           ) : (
-            <iframe key="preview" title="Template preview" sandbox=""
-              className="h-[420px] w-full rounded-md border border-line bg-white"
-              srcDoc={`<div style="${BODY_STYLE}">${fillSample(form.body_html, form.mail_type, true)}</div>`} />
+            <EmailView key="preview" className="h-[420px]" html={fillSample(form.body_html, form.mail_type, true)} />
           )}
           <p className="mt-1 text-xs text-muted">
             {mode === "edit"

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, formatAmount } from "../api";
 import MailTypeBadge, { MAIL_TYPE_LABELS } from "../components/MailTypeBadge";
 import Modal from "../components/Modal";
+import { EmailEditor, EmailView } from "../components/EmailHtml";
 import { Alert, badge, btnCls, card, cx, h2, link, num, page, rowCls, table } from "../components/ui";
 
 // Users prepare and edit the emails here. Their "Send" puts them in Pending Mails, where an admin sends them.
@@ -243,7 +244,6 @@ export function EmailPreview({ email, config, templates, locked, onSaved, onRese
   const [editorSeed, setEditorSeed] = useState(""); // HTML loaded into the editor when it opens
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const editorRef = useRef(null);
 
   const isSent = !canEdit || email.status === "SENT";
   const dirty = !!draft && (draft.subject !== email.subject || draft.body_html !== email.body_html);
@@ -261,19 +261,6 @@ export function EmailPreview({ email, config, templates, locked, onSaved, onRese
     setDraft(current);
     setEditorSeed(current.body_html);
     setMode("edit");
-  }
-
-  // Make the iframe document editable (WYSIWYG) and copy every change into the draft
-  function onEditorLoad() {
-    const doc = editorRef.current?.contentDocument;
-    if (!doc) {
-      setError("Could not open the editor. Switch to Preview and back to Edit, or reload the page.");
-      return;
-    }
-    doc.designMode = "on";
-    doc.addEventListener("input", () => {
-      setDraft((d) => ({ ...d, body_html: doc.body.innerHTML }));
-    });
   }
 
   async function downloadAttachment() {
@@ -414,22 +401,11 @@ export function EmailPreview({ email, config, templates, locked, onSaved, onRese
         </div>
       </div>
 
-      {/* Different keys force a brand-new iframe on toggle: an iframe reused by React
-          keeps its old sandbox and never fires onLoad, so it would not become editable */}
       {mode === "edit" ? (
-        // allow-same-origin (no scripts) lets us switch the iframe into edit mode
-        <iframe
-          key="editor"
-          ref={editorRef}
-          className={cx("h-[520px] w-full rounded-md border border-line bg-white", "outline outline-2 -outline-offset-1 outline-brand")}
-          title="Email body editor"
-          srcDoc={editorSeed}
-          sandbox="allow-same-origin"
-          onLoad={onEditorLoad}
-        />
+        <EmailEditor key="editor" className="h-[520px]" html={editorSeed}
+          onChange={(html) => setDraft((d) => ({ ...d, body_html: html }))} />
       ) : (
-        // iframe keeps the email's own styling separate from the app
-        <iframe key="preview" className={"h-[520px] w-full rounded-md border border-line bg-white"} title="Email body" srcDoc={shown.body_html} sandbox="" />
+        <EmailView key="preview" className="h-[520px]" html={shown.body_html} />
       )}
       {mode === "edit" && (
         <p className="text-xs text-muted">Click in the email to edit. Ctrl+B / Ctrl+I / Ctrl+U for bold, italic, underline.</p>

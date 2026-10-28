@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, formatDateTime } from "../api";
+import { EmailEditor } from "./EmailHtml";
 import Modal from "./Modal";
 import { Alert, btnCls, input } from "./ui";
 
@@ -18,21 +19,12 @@ export default function FollowUpModal({ email, onClose, onSent }) {
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const editorRef = useRef(null);
 
   useEffect(() => {
     api.followupDraft(email.id)
       .then((d) => { setDraft(d); setTo(d.to.join(", ")); setCc(d.cc.join(", ")); setSubject(d.subject); setBody(d.body_html); })
       .catch((e) => setError(e.message));
   }, [email.id]);
-
-  // The body is edited in place (WYSIWYG), like the email editor on the Email Preview page
-  function onEditorLoad() {
-    const doc = editorRef.current?.contentDocument;
-    if (!doc) return;
-    doc.designMode = "on";
-    doc.addEventListener("input", () => setBody(doc.body.innerHTML));
-  }
 
   const toList = splitAddresses(to);
   const ccList = splitAddresses(cc);
@@ -90,8 +82,8 @@ export default function FollowUpModal({ email, onClose, onSent }) {
           <label>Subject<input className={input} value={subject} maxLength={300} onChange={(e) => setSubject(e.target.value)} disabled={confirming} /></label>
           <div>
             <div className="mb-1.5 text-[13px] font-semibold">Message <span className="text-xs text-muted">(click in the email to edit; replace the highlighted text)</span></div>
-            <iframe ref={editorRef} title="Follow-up message" className="h-[340px] w-full rounded-md border border-line bg-white outline outline-2 -outline-offset-1 outline-brand"
-              srcDoc={draft.body_html} sandbox="allow-same-origin" onLoad={onEditorLoad} />
+            {/* The body is edited in place (WYSIWYG), like the email editor on the Email Preview page */}
+            <EmailEditor className="h-[340px]" label="Follow-up message" html={draft.body_html} onChange={setBody} />
           </div>
           {problem && <p className="text-xs text-red-700">{problem}</p>}
         </div>

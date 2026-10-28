@@ -119,7 +119,9 @@ def render_template(subject: str, body_html: str, partner_name: str, mail_type: 
             return escape(value) if html else value
         return PLACEHOLDER_RE.sub(one, text)
 
-    return " ".join(fill(subject, False).split())[:300], BODY_WRAP.format(fill(body_html, True))
+    # Email clients ignore stylesheets: plain paragraphs (written on the Email Templates page) get their spacing inline
+    body = re.sub(r"<p>", P, fill(body_html, True), flags=re.I)
+    return " ".join(fill(subject, False).split())[:300], BODY_WRAP.format(body)
 
 
 def build_email(partner_name: str, mail_type: str, transactions: list, template=None) -> tuple[str, str]:
