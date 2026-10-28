@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, describeDevice, formatDateTime } from "../api";
 import { checkPassword, PasswordInput, PasswordStrength } from "../components/Password";
 import { EVENT_LABELS, RoleBadge } from "./AccountPage";
-import { Alert, badge, btnCls, card, cx, formCls, h2, input, num, page, table, tableCompact } from "../components/ui";
+import { Alert, badge, btnCls, card, cx, formCls, h2, input, num, page, table, tableCompact, scrollX } from "../components/ui";
 
 const EMPTY_USER = { full_name: "", username: "", email: "", password: "", role: "user", admin_code: "" };
 
@@ -45,7 +45,7 @@ export default function UsersPage({ currentUser }) {
   return (
     <div className={page}>
       <section className={card}>
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 className={h2}>Users ({users.length})</h2>
           <button className={btnCls("primary")} onClick={() => setShowCreate((s) => !s)}>
             {showCreate ? "Close" : "+ New user"}
@@ -59,7 +59,7 @@ export default function UsersPage({ currentUser }) {
             setMessage({ type: "success", text: `Account "${u.username}" created.` });
           }} />
         )}
-        <table className={table}>
+        <div className={scrollX}><table className={table}>
           <thead>
             <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th><th /></tr>
           </thead>
@@ -95,7 +95,7 @@ export default function UsersPage({ currentUser }) {
               );
             })}
           </tbody>
-        </table>
+        </table></div>
       </section>
       <AuditLog />
     </div>
@@ -167,19 +167,19 @@ function AuditLog() {
 
   return (
     <section className={card}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-[1_1_320px]">
           <h2 className={h2}>Security audit log</h2>
           <p className="text-xs text-muted">Sign-ins, failures, lockouts, password changes and account changes.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <label className="flex cursor-pointer items-center gap-1.5 text-[13px]">
             <input type="checkbox" checked={onlyFailures} onChange={(e) => setOnlyFailures(e.target.checked)} /> Failures only
           </label>
           <button className={btnCls("default", "sm")} onClick={load}>Refresh</button>
         </div>
       </div>
-      <table className={tableCompact}>
+      <div className={scrollX}><table className={tableCompact}>
         <thead><tr><th>When</th><th>User</th><th>Event</th><th>Details</th><th>Device</th><th>IP address</th></tr></thead>
         <tbody>
           {shown.map((e) => (
@@ -194,7 +194,7 @@ function AuditLog() {
           ))}
           {!shown.length && <tr><td colSpan={6} className="text-muted">Nothing to show.</td></tr>}
         </tbody>
-      </table>
+      </table></div>
     </section>
   );
 }

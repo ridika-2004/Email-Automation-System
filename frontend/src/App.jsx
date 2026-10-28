@@ -141,11 +141,12 @@ function MainApp({ user, onUserChange, onSignOut }) {
         user={user}
         pinned={pinned}
         onTogglePin={togglePin}
+        title={info.title}
         footer={config && <span title="Emails go to this SMTP server">SMTP {config.smtp_host}:{config.smtp_port}</span>}
       />
 
       <div className="mx-auto max-w-[1200px] px-4 pb-10 min-[640px]:px-8">
-        <header className="flex flex-wrap items-end justify-between gap-2 border-b border-line pb-3.5 pt-6 mb-5">
+        <header className="mb-5 flex flex-wrap items-end justify-between gap-2 border-b border-line pb-3.5 pt-6 max-[640px]:mb-3.5 max-[640px]:pt-4">
           <div>
             <h1 className="text-xl font-bold">{info.title}</h1>
             <p className="mt-1 text-muted">{info.subtitle}</p>

@@ -4,7 +4,7 @@ import EmailActivity from "../components/EmailActivity";
 import FollowUpModal from "../components/FollowUpModal";
 import MailTypeBadge from "../components/MailTypeBadge";
 import { EmailPreview } from "./EmailsPage";
-import { Alert, badge, btnCls, card, chevron, cx, expandedCell, h2, input, num, page, rowCls, table } from "../components/ui";
+import { Alert, badge, btnCls, card, chevron, cx, expandedCell, h2, input, num, page, rowCls, table, scrollX } from "../components/ui";
 
 // Reply-status chip (filter) and select / badge colours
 const CHIP_ACTIVE = {
@@ -121,8 +121,8 @@ export default function SentPage({ config, isAdmin }) {
   return (
     <div className={page}>
       <section className={card}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_320px]">
             <h2 className={h2}>Sent mails ({emails.length})</h2>
             <p className="text-xs text-muted">
               Emails already sent to partners, from every uploaded file. Open one with ▸ to read it and see its follow-up history.
@@ -177,7 +177,7 @@ export default function SentPage({ config, isAdmin }) {
         )}
 
         {emails.length > 0 && (
-          <table className={table}>
+          <div className={scrollX}><table className={table}>
             <thead>
               <tr>
                 <th /><th>Partner</th><th>File</th><th className={num}>Txns</th><th className={num}>Amount (BDT)</th>
@@ -251,7 +251,7 @@ export default function SentPage({ config, isAdmin }) {
                 </Fragment>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
 

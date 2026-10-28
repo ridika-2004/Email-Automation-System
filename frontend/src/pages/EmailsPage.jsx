@@ -3,7 +3,7 @@ import { api, formatAmount } from "../api";
 import MailTypeBadge, { MAIL_TYPE_LABELS } from "../components/MailTypeBadge";
 import Modal from "../components/Modal";
 import { EmailEditor, EmailView } from "../components/EmailHtml";
-import { Alert, badge, btnCls, card, cx, h2, link, num, page, rowCls, table } from "../components/ui";
+import { Alert, badge, btnCls, card, cx, h2, link, num, page, rowCls, table, scrollX } from "../components/ui";
 
 // Users prepare and edit the emails here. Their "Send" puts them in Pending Mails, where an admin sends them.
 export default function EmailsPage({ uploadId, config, onOpenPending }) {
@@ -81,15 +81,15 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
   return (
     <div className={page}>
       <section className={card}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_320px]">
             <h2 className={h2}>Prepared emails ({emails.length})</h2>
             <p className="text-xs text-muted">
               One email per partner and mail type, with its transactions attached as an Excel file. Check and edit them, then press Send:
               they go to <b>Pending Mails</b> and an admin sends them to the partners.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button className={btnCls()} onClick={() => prepare()} disabled={!!busy}>
               {busy === "preparing" ? "Refreshing..." : "Refresh previews"}
             </button>
@@ -114,10 +114,10 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
               const ids = new Set(drafts.map((e) => e.template_id));
               const value = ids.size === 1 ? [...ids][0] ?? "" : "";
               return (
-                <label key={type} className="flex items-center gap-2 text-[13px]">
+                <label key={type} className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-[13px]">
                   <MailTypeBadge type={type} />
                   <select
-                    className="rounded border border-line bg-white px-2 py-1 text-[13px] focus:border-brand focus:outline-none disabled:opacity-60"
+                    className="min-w-0 max-w-full rounded border border-line bg-white px-2 py-1 text-[13px] focus:border-brand focus:outline-none disabled:opacity-60"
                     value={value}
                     disabled={!!busy || hasUnsavedEdits}
                     title={hasUnsavedEdits ? "Save or discard your edits first" : `Used for all ${drafts.length} ${MAIL_TYPE_LABELS[type]} email(s)`}
@@ -153,7 +153,7 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
           </Alert>
         )}
 
-        <table className={table}>
+        <div className={scrollX}><table className={table}>
           <thead>
             <tr>
               <th>Partner</th><th>Mail Type</th><th>Template</th><th>To</th><th className={num}>Txns</th>
@@ -189,7 +189,7 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </section>
 
       {selected && (
@@ -314,12 +314,12 @@ export function EmailPreview({ email, config, templates, locked, onSaved, onRese
 
   return (
     <section className={card}>
-      <div className="flex items-start justify-between gap-3">
-        <h2 className={h2}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className={cx(h2, "min-w-0 flex-[1_1_280px]")}>
           Email {mode === "edit" ? "editor" : "preview"} — {email.partner_name} <MailTypeBadge type={email.mail_type} className="ml-1.5 !text-xs" />
           {dirty && <span className="text-xs text-muted"> (unsaved changes)</span>}
         </h2>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {(mode === "edit" || dirty) && (
             <>
               <button className={btnCls("default", "sm")} onClick={discard} disabled={saving}>Discard</button>
@@ -358,7 +358,7 @@ export function EmailPreview({ email, config, templates, locked, onSaved, onRese
 
       {error && <Alert type="error">{error}</Alert>}
 
-      <div className="mb-3 rounded-md border border-line [&>div:last-child]:border-b-0 [&>div>span:first-child]:inline-block [&>div>span:first-child]:w-[70px] [&>div>span:first-child]:text-muted [&>div]:border-b [&>div]:border-line [&>div]:px-3 [&>div]:py-2">
+      <div className="mb-3 break-words rounded-md border border-line [&>div:last-child]:border-b-0 [&>div>span:first-child]:inline-block [&>div>span:first-child]:w-[70px] [&>div>span:first-child]:text-muted [&>div]:border-b [&>div]:border-line [&>div]:px-3 [&>div]:py-2">
         {canPickTemplate && (
           <div>
             <span>Template</span>

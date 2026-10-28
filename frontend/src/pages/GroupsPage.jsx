@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatAmount } from "../api";
 import MailTypeBadge from "../components/MailTypeBadge";
-import { Alert, badge, btnCls, card, h2, num, page, table, tableCompact } from "../components/ui";
+import { Alert, badge, btnCls, card, h2, num, page, table, tableCompact, scrollX } from "../components/ui";
 
 export default function GroupsPage({ uploadId, onNext }) {
   const [data, setData] = useState(null);
@@ -29,7 +29,7 @@ export default function GroupsPage({ uploadId, onNext }) {
           email, written from its TXN_DIRECTION template (Inward / Outward). Click a group to see its transactions.
         </p>
 
-        <table className={table}>
+        <div className={scrollX}><table className={table}>
           <thead>
             <tr>
               <th></th>
@@ -54,7 +54,7 @@ export default function GroupsPage({ uploadId, onNext }) {
               <td></td>
             </tr>
           </tfoot>
-        </table>
+        </table></div>
 
         <button className={btnCls("primary")} onClick={onNext}>Prepare emails →</button>
       </section>
@@ -81,7 +81,7 @@ function GroupRows({ group, isOpen, onToggle }) {
         <tr className="[&>td]:!bg-gray-50">
           <td></td>
           <td colSpan={5}>
-            <table className={tableCompact}>
+            <div className={scrollX}><table className={tableCompact}>
               <thead>
                 <tr>
                   <th>RRN</th><th>Approval date &amp; time</th><th>Txn type</th><th>Txn ID</th><th>Status</th>
@@ -104,7 +104,7 @@ function GroupRows({ group, isOpen, onToggle }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           </td>
         </tr>
       )}

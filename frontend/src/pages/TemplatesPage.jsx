@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, formatDateTime } from "../api";
 import { EmailEditor, EmailView } from "../components/EmailHtml";
 import MailTypeBadge, { MAIL_TYPE_LABELS } from "../components/MailTypeBadge";
-import { Alert, badge, btnCls, card, checkLabel, cx, h2, input, label, page, table } from "../components/ui";
+import { Alert, badge, btnCls, card, checkLabel, cx, h2, input, label, page, table, scrollX } from "../components/ui";
 
 // Users keep several templates per mail type here. The default one is used for new emails;
 // another can be picked for each email on the Email Preview & Send page.
@@ -89,8 +89,8 @@ export default function TemplatesPage() {
       )}
 
       <section className={card}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_320px]">
             <h2 className={h2}>Email templates</h2>
             <p className="text-xs text-muted">
               Keep a template for each case (first notice, urgent settlement, partner-specific wording...).
@@ -116,7 +116,7 @@ export default function TemplatesPage() {
               {list.length === 0 ? (
                 <p className="my-3 text-xs text-muted">No templates yet: the standard wording is used.</p>
               ) : (
-                <table className={table}>
+                <div className={scrollX}><table className={table}>
                   <thead>
                     <tr><th>Name</th><th>Subject</th><th>Last changed</th><th></th></tr>
                   </thead>
@@ -150,7 +150,7 @@ export default function TemplatesPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               )}
             </div>
           );
@@ -235,7 +235,7 @@ function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, on
           <input className={input} maxLength={255} value={form.description} placeholder="e.g. Second notice for partners with a large amount"
             onChange={(e) => set({ description: e.target.value })} />
         </label>
-        <label className={cx(checkLabel, "text-[13px]")}>
+        <label className={cx(checkLabel, "flex text-[13px]")}>
           <input type="checkbox" checked={form.is_default} disabled={wasDefault}
             onChange={(e) => set({ is_default: e.target.checked })} />
           Default {MAIL_TYPE_LABELS[form.mail_type]} template (used for new emails)
@@ -287,7 +287,7 @@ function TemplateEditor({ form: initial, editingId, placeholders, wasDefault, on
 
         {error && <Alert type="error">{error}</Alert>}
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className={btnCls("primary")} disabled={saving}>{saving ? "Saving..." : "Save template"}</button>
           <button type="button" className={btnCls()} onClick={onCancel} disabled={saving}>Cancel</button>
         </div>

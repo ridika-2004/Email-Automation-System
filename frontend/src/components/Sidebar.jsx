@@ -4,11 +4,15 @@ import { cx } from "./ui";
 // Left sidebar with every page and the user settings. Hidden by default: moving the mouse to the
 // left edge of the screen shows an arrow, and pointing at (or clicking) the arrow slides the
 // sidebar in. It slides out again when the mouse leaves it, unless it is pinned.
-// On touch screens the arrow is always visible.
+// On touch screens the arrow is always visible. On narrow screens (phones) a bar at the top has a
+// menu button instead, and the sidebar is never pinned: it would cover the page.
 
 const PIN_KEY = "npsb:sidebar-pinned";
 const OPEN_DELAY = 120;  // ms on the arrow before the sidebar opens (so passing over it doesn't)
 const CLOSE_DELAY = 350; // ms after the mouse leaves before it closes
+
+const WIDE = "(min-width: 900px)"; // the page makes room for a pinned sidebar from here (App.jsx)
+const isWide = () => typeof window === "undefined" || window.matchMedia(WIDE).matches;
 
 const readPinned = () => { try { return localStorage.getItem(PIN_KEY) === "1"; } catch { return false; } };
 const savePinned = (v) => { try { localStorage.setItem(PIN_KEY, v ? "1" : "0"); } catch { /* not saved */ } };
@@ -16,11 +20,18 @@ const savePinned = (v) => { try { localStorage.setItem(PIN_KEY, v ? "1" : "0"); 
 // sections: [{ title, items: [{ id, label, icon, disabled, hint, sub, onClick, danger }] }]
 export function useSidebarPin() {
   const [pinned, setPinned] = useState(readPinned);
+  const [wide, setWide] = useState(isWide);
+  useEffect(() => {
+    const query = window.matchMedia(WIDE);
+    const onChange = () => setWide(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
   const toggle = () => setPinned((p) => { savePinned(!p); return !p; });
-  return [pinned, toggle];
+  return [pinned && wide, toggle];
 }
 
-export default function Sidebar({ sections, active, onSelect, user, footer, pinned, onTogglePin }) {
+export default function Sidebar({ sections, active, onSelect, user, footer, pinned, onTogglePin, title }) {
   const [open, setOpen] = useState(false);
   const timer = useRef(null);
   const panel = useRef(null);
@@ -47,9 +58,26 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
 
   return (
     <>
+      {/* Phones: top bar with the menu button */}
+      <div className="sticky top-0 z-20 flex items-center gap-2 border-b border-line bg-white px-2 py-2 min-[900px]:hidden">
+        <button
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={open}
+          className="rounded-md p-2 text-ink hover:bg-gray-100"
+          onClick={() => setOpen(true)}
+        >
+          <Icon name="menu" className="h-5 w-5" />
+        </button>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand text-white" aria-hidden="true">
+          <Icon name="mail" className="h-3.5 w-3.5" />
+        </span>
+      </div>
+
       {/* Left edge: hovering it reveals the arrow */}
       {!pinned && (
-        <div className="group fixed inset-y-0 left-0 z-30 w-5" aria-hidden={visible}>
+        <div className="group fixed inset-y-0 left-0 z-30 w-5 max-[899px]:hidden" aria-hidden={visible}>
           <button
             type="button"
             aria-label="Open menu"
@@ -72,7 +100,7 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
 
       {/* Dim the page while the sidebar floats over it */}
       {open && !pinned && (
-        <div className="fixed inset-0 z-30 bg-gray-900/10" onClick={() => setOpen(false)} aria-hidden="true" />
+        <div className="fixed inset-0 z-30 bg-gray-900/10 max-[899px]:bg-gray-900/40" onClick={() => setOpen(false)} aria-hidden="true" />
       )}
 
       <aside
@@ -81,7 +109,7 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
         aria-hidden={!visible}
         inert={visible ? undefined : ""}
         className={cx(
-          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-line bg-white transition-transform duration-200 ease-out",
+          "fixed inset-y-0 left-0 z-40 flex w-64 max-w-[85vw] flex-col border-r border-line bg-white transition-transform duration-200 ease-out",
           visible ? "translate-x-0" : "-translate-x-full",
           open && !pinned && "shadow-modal",
         )}
@@ -98,7 +126,7 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
           </div>
           <button
             type="button"
-            className={cx("rounded-md p-1.5 hover:bg-gray-100", pinned ? "text-brand" : "text-muted")}
+            className={cx("rounded-md p-1.5 hover:bg-gray-100 max-[899px]:hidden", pinned ? "text-brand" : "text-muted")}
             title={pinned ? "Unpin: hide the menu when not in use" : "Pin: keep the menu open"}
             aria-pressed={pinned}
             onClick={() => { onTogglePin(); setOpen(false); }}
@@ -163,6 +191,7 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
 
 const ICONS = {
   chevronRight: <path d="m9 6 6 6-6 6" />,
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></>,
   home: <><path d="M3 11 12 4l9 7" /><path d="M5 10v10h14V10" /><path d="M10 20v-6h4v6" /></>,
   upload: <><path d="M12 15V3" /><path d="m7 8 5-5 5 5" /><path d="M5 21h14" /></>,
