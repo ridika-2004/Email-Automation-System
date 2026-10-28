@@ -182,10 +182,20 @@ export const api = {
   createPartner: (partner) => request("/api/partners", json("POST", partner)),
   updatePartner: (id, partner) => request(`/api/partners/${id}`, json("PUT", partner)),
 
+  // email templates (users change them, everyone reads them)
+  listTemplates: () => request("/api/email-templates"),
+  createTemplate: (template) => request("/api/email-templates", json("POST", template)),
+  updateTemplate: (id, template) => request(`/api/email-templates/${id}`, json("PUT", template)),
+  setDefaultTemplate: (id) => request(`/api/email-templates/${id}/default`, { method: "POST" }),
+  deleteTemplate: (id) => request(`/api/email-templates/${id}`, { method: "DELETE" }),
+
   getEmails: (uploadId) => request(`/api/uploads/${uploadId}/emails`),
-  prepareEmails: (uploadId) => request(`/api/uploads/${uploadId}/prepare-emails`, { method: "POST" }),
+  // templates: { inward: id, outward: id } rebuilds every draft of that mail type from the template
+  prepareEmails: (uploadId, templates) =>
+    request(`/api/uploads/${uploadId}/prepare-emails`, templates ? json("POST", { templates }) : { method: "POST" }),
   editEmail: (id, email) => request(`/api/emails/${id}`, json("PUT", email)),
   discardEmailEdits: (id) => request(`/api/emails/${id}/edits`, { method: "DELETE" }),
+  applyTemplate: (id, template_id) => request(`/api/emails/${id}/template`, json("PUT", { template_id })),
   // users: drafts -> pending (waits for an admin)
   submitEmails: (uploadId) => request(`/api/uploads/${uploadId}/submit`, { method: "POST" }),
   pendingEmails: () => request("/api/pending-emails"),

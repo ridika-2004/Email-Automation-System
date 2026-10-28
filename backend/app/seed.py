@@ -9,6 +9,20 @@ DEMO_PARTNERS = [
 ]
 
 
+def seed_templates(db):
+    """A new database gets the two templates of docs/Email_Template.docx, as the defaults."""
+    from .email_service import DEFAULT_TEMPLATES
+
+    if db.query(models.EmailTemplate).count() > 0:
+        return
+    for mail_type, t in DEFAULT_TEMPLATES.items():
+        db.add(models.EmailTemplate(
+            name=t["name"], mail_type=mail_type, subject=t["subject"], body_html=t["body_html"].strip(),
+            description="Standard wording (docs/Email_Template.docx)", is_default=True,
+        ))
+    db.commit()
+
+
 def seed_partners(db):
     if db.query(models.Partner).count() > 0:
         return

@@ -38,18 +38,32 @@ def _date_text(transactions: list) -> str:
     return first if first == last else f"{first} to {last}"
 
 
-def build_email(partner_name: str, mail_type: str, transactions: list) -> tuple[str, str]:
-    """Return (subject, html_body) for one partner and mail type, worded as in docs/Email_Template.docx.
-    The transactions go in an attached Excel file (transactions_xlsx), as the templates say."""
-    dates = _date_text(transactions)
+# ---------------------------------------------------------------- email templates
+# Users keep their own templates on the Email Templates page (EmailTemplate table). A template's subject
+# and body may contain these placeholders, filled in for each partner when the email is prepared.
+PLACEHOLDERS = {
+    "partner_name": "Partner name (KEY_ORG_NM)",
+    "date": "Transaction date, or date range",
+    "txn_count": "Number of transactions",
+    "total_amount": "Total amount (BDT)",
+    "mail_type": "Inward Transaction / Outward Transaction",
+}
+PLACEHOLDER_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
-    if mail_type == "inward":
-        subject = f"Successful at NAGAD but not found in OIC Settlement File - {partner_name} - Dated {dates}"
-        text = f"""
+# The body of a template is wrapped in this (font, size, colour) when the email is built
+BODY_WRAP = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.45">{}\n</div>\n'
+
+# The wording of docs/Email_Template.docx: the first templates of a new database, and the fallback
+# when a mail type has no template at all.
+DEFAULT_TEMPLATES = {
+    "inward": {
+        "name": "Inward - Not found in OIC Settlement File",
+        "subject": "Successful at NAGAD but not found in OIC Settlement File - {{partner_name}} - Dated {{date}}",
+        "body_html": f"""
   {P}Dear Concern</p>
   {P}Assalamualaikum.</p>
   {P}This is to bring to your kind attention that the attached NPSB Inward and Bangla QR Acquirer transactions
-     dated {dates} were successfully processed at NAGAD\u2019s end; however, the transactions are not reflected
+     dated {{{{date}}}} were successfully processed at NAGAD\u2019s end; however, the transactions are not reflected
      in the Bangladesh Bank OIC Settlement File.</p>
   {P}As these transactions are not included in the settlement file, the corresponding settlement funds have not
      yet been received by NAGAD. This may result in a financial exposure if the matter remains unresolved.</p>
@@ -57,10 +71,13 @@ def build_email(partner_name: str, mail_type: str, transactions: list) -> tuple[
      for the transactions not being reflected in the OIC Settlement File. Kindly take the necessary corrective
      measures and arrange the corresponding settlement at the earliest possible time to minimize any potential
      financial impact.</p>
-  {P}For your review and necessary action, please find attached the required transaction details.</p>"""
-    else:  # outward
-        subject = f"NPSB Outward Transactions - Claim Confirmation Required - {partner_name} - Dated {dates}"
-        text = f"""
+  {P}For your review and necessary action, please find attached the required transaction details.</p>
+  {SIGNATURE}""",
+    },
+    "outward": {
+        "name": "Outward - Claim confirmation",
+        "subject": "NPSB Outward Transactions - Claim Confirmation Required - {{partner_name}} - Dated {{date}}",
+        "body_html": f"""
   {P}Dear Concern,</p>
   {P}Assalamualaikum.</p>
   {P}Please find attached a list of transactions. We would appreciate your review and feedback on these
@@ -71,9 +88,47 @@ def build_email(partner_name: str, mail_type: str, transactions: list) -> tuple[
      within this timeframe, we will consider that there is no claim from your end regarding these
      transactions.</b></p>
   {P}Your prompt feedback will help us complete the reconciliation process smoothly.</p>
-  {P}Thank you for your continued cooperation and support.</p>"""
+  {P}Thank you for your continued cooperation and support.</p>
+  {SIGNATURE}""",
+    },
+}
 
-    return subject, WRAP.format(text)
+
+def unknown_placeholders(*texts: str) -> list[str]:
+    """Placeholders used in the texts that are not in PLACEHOLDERS (typos like {{partner}})."""
+    found = {name for t in texts for name in PLACEHOLDER_RE.findall(t)}
+    return sorted(found - set(PLACEHOLDERS))
+
+
+def render_template(subject: str, body_html: str, partner_name: str, mail_type: str,
+                    transactions: list) -> tuple[str, str]:
+    """(subject, html_body) of one email: the template with its placeholders filled in."""
+    values = {
+        "partner_name": partner_name,
+        "date": _date_text(transactions),
+        "txn_count": str(len(transactions)),
+        "total_amount": f"{sum(float(t.amount) for t in transactions):,.2f}",
+        "mail_type": MAIL_TYPES.get(mail_type, mail_type),
+    }
+
+    def fill(text: str, html: bool) -> str:
+        def one(m):
+            value = values.get(m.group(1))
+            if value is None:
+                return m.group(0)  # unknown placeholder: left as written
+            return escape(value) if html else value
+        return PLACEHOLDER_RE.sub(one, text)
+
+    return " ".join(fill(subject, False).split())[:300], BODY_WRAP.format(fill(body_html, True))
+
+
+def build_email(partner_name: str, mail_type: str, transactions: list, template=None) -> tuple[str, str]:
+    """Return (subject, html_body) for one partner and mail type from `template` (an EmailTemplate),
+    or from the wording of docs/Email_Template.docx when there is none.
+    The transactions go in an attached Excel file (transactions_xlsx), as the templates say."""
+    t = template or DEFAULT_TEMPLATES["inward" if mail_type == "inward" else "outward"]
+    subject, body_html = (t.subject, t.body_html) if template else (t["subject"], t["body_html"])
+    return render_template(subject, body_html, partner_name, mail_type, transactions)
 
 
 # The attachment has the same columns as the uploaded file

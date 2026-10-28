@@ -172,6 +172,25 @@ class PartnerEmail(Base):
     partner: Mapped[Partner] = relationship(back_populates="emails")
 
 
+class EmailTemplate(Base):
+    """Subject and body of the email to a partner, kept by users on the Email Templates page.
+    Several per mail type; the default one is used for new emails, and users can pick another
+    for each email. {{placeholders}} are filled in per partner (email_service.PLACEHOLDERS)."""
+    __tablename__ = "email_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    mail_type: Mapped[str] = mapped_column(String(20))       # inward / outward
+    description: Mapped[str] = mapped_column(String(255), default="")  # when to use it
+    subject: Mapped[str] = mapped_column(String(300))
+    body_html: Mapped[str] = mapped_column(Text)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)  # one per mail type
+    created_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_by: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 class Upload(Base):
     """One uploaded dispute file."""
     __tablename__ = "uploads"
@@ -230,6 +249,8 @@ class EmailDispatch(Base):
     subject: Mapped[str] = mapped_column(String(300))
     body_html: Mapped[str] = mapped_column(Text)
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False)  # manually edited -> keep on refresh
+    # The template it is built from (None: the default template of its mail type)
+    template_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     txn_count: Mapped[int] = mapped_column(Integer)
     total_amount: Mapped[float] = mapped_column(Numeric(14, 2))
     # PREPARED (user's draft) -> PENDING (waiting for an admin) -> SENDING (claimed by one admin) -> SENT / FAILED

@@ -10,6 +10,7 @@ import PartnersPage from "./pages/PartnersPage";
 import PendingPage from "./pages/PendingPage";
 import SentPage from "./pages/SentPage";
 import EmailConfigPage from "./pages/EmailConfigPage";
+import TemplatesPage from "./pages/TemplatesPage";
 import AdminHomePage from "./pages/AdminHomePage";
 import Sidebar, { useSidebarPin } from "./components/Sidebar";
 import { cx } from "./components/ui";
@@ -23,6 +24,7 @@ const PAGES = {
   pending: { title: "Pending Mails", subtitle: "Emails waiting for an admin to send them" },
   sent: { title: "Sent Mails", subtitle: "Emails sent to partners, their replies and follow-ups" },
   partners: { title: "Partner Configuration", subtitle: "Partners and the addresses their emails go to" },
+  templates: { title: "Email Templates", subtitle: "Your templates for each case: pick one for each partner's email" },
   emailConfig: { title: "Email Configuration", subtitle: "Follow-up timing, automatic follow-ups, recipients and the mail server" },
   account: { title: "My Profile", subtitle: "Your details, password, devices and sign-in activity" },
   users: { title: "Users & Security", subtitle: "Accounts, roles and the security log" },
@@ -113,6 +115,8 @@ function MainApp({ user, onUserChange, onSignOut }) {
       title: "Configuration",
       items: [
         { id: "partners", label: "Partner Configuration", icon: "building" },
+        // users write the emails, so the templates are theirs
+        ...(isAdmin ? [] : [{ id: "templates", label: "Email Templates", icon: "template" }]),
         { id: "emailConfig", label: "Email Configuration", icon: "sliders" },
       ],
     },
@@ -165,6 +169,7 @@ function MainApp({ user, onUserChange, onSignOut }) {
           {tab === "pending" && <PendingPage config={config} isAdmin={isAdmin} />}
           {tab === "sent" && <SentPage config={config} isAdmin={isAdmin} />}
           {tab === "partners" && <PartnersPage isAdmin={isAdmin} />}
+          {tab === "templates" && !isAdmin && <TemplatesPage />}
           {tab === "emailConfig" && <EmailConfigPage isAdmin={isAdmin} onSaved={loadConfig} />}
           {tab === "account" && <AccountPage user={user} onUserChange={onUserChange} onSignedOut={onSignOut} />}
           {tab === "users" && isAdmin && <UsersPage currentUser={user} />}

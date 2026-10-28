@@ -122,6 +122,20 @@ CREATE TABLE trusted_devices (   -- "Keep me signed in": password only, no email
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE email_templates (   -- Email Templates page: several per mail type, one default each
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(100) NOT NULL UNIQUE,
+  mail_type   VARCHAR(20)  NOT NULL,              -- inward / outward
+  description VARCHAR(255) NOT NULL DEFAULT '',   -- when to use it
+  subject     VARCHAR(300) NOT NULL,              -- may contain {{partner_name}}, {{date}}, ...
+  body_html   TEXT         NOT NULL,
+  is_default  BOOLEAN      NOT NULL DEFAULT FALSE,  -- used for new emails of its mail type
+  created_by  VARCHAR(30)  NULL,
+  created_at  DATETIME     NOT NULL,
+  updated_by  VARCHAR(30)  NULL,
+  updated_at  DATETIME     NOT NULL
+);
+
 CREATE TABLE uploads (
   id           INT AUTO_INCREMENT PRIMARY KEY,
   filename     VARCHAR(255) NOT NULL,
@@ -161,6 +175,7 @@ CREATE TABLE email_dispatches (
   subject      VARCHAR(300) NOT NULL,
   body_html    TEXT NOT NULL,
   is_edited    BOOLEAN NOT NULL DEFAULT FALSE,              -- manually edited in the UI
+  template_id  INT NULL,                                    -- email_templates.id it was built from
   txn_count    INT NOT NULL,
   total_amount DECIMAL(14,2) NOT NULL,
   status       VARCHAR(20) NOT NULL DEFAULT 'PREPARED',  -- PREPARED / PENDING / SENDING / SENT / FAILED

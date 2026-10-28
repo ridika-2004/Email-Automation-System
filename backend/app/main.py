@@ -10,6 +10,7 @@ Flow:
   7. GET  /api/sent-emails                 -> sent emails: search, partner filter, sort    (everyone)
   8. Follow-up of sent emails: reply status, follow-up emails, notes, history           (admins change, everyone reads)
   9. GET/PUT /api/email-settings           -> follow-up days, automatic follow-ups, CC, Reply-To (admins change)
+ 10. /api/email-templates                  -> email templates per mail type (users change, everyone reads)
 
 Automatic follow-ups: when switched on, a background thread sends the follow-up of every email
 that is due (see run_auto_followups), as the "system" user.
@@ -36,11 +37,11 @@ from . import auth, config, models, settings, users
 from .database import Base, SessionLocal, create_database_if_missing, engine, get_db
 from .email_check import validate_real_email
 from .email_service import (
-    MAIL_TYPE_NAMES, MAIL_TYPES, RecipientsRefused, attachment_name, build_email, build_followup, send_email,
-    transactions_xlsx,
+    MAIL_TYPE_NAMES, MAIL_TYPES, PLACEHOLDERS, RecipientsRefused, attachment_name, build_email, build_followup,
+    send_email, transactions_xlsx, unknown_placeholders,
 )
 from .excel_parser import FileValidationError, build_template, parse_transactions, split_rows, to_xlsx
-from .seed import seed_partners
+from .seed import seed_partners, seed_templates
 
 app = FastAPI(title="NPSB Dispute Email Automation")
 
@@ -65,6 +66,7 @@ def on_startup():
         print("WARNING: JWT_SECRET is not set in .env - everyone is signed out when the server restarts.")
     with SessionLocal() as db:
         seed_partners(db)                    # add demo partners on first run
+        seed_templates(db)                   # and the standard email templates
     threading.Thread(target=auto_followup_loop, name="auto-followups", daemon=True).start()
 
 
@@ -114,6 +116,7 @@ LATER_COLUMNS = [
     ("users", "password_changed_at", "DATETIME NULL"),
     ("users", "updated_at", "DATETIME NULL"),
     ("users", "role", "VARCHAR(10) NOT NULL DEFAULT 'user'"),  # existing accounts become "user"
+    ("email_dispatches", "template_id", "INT NULL"),
 ]
 # Columns that are no longer used: (table, column). Removed on startup when present.
 REMOVED_COLUMNS: list[tuple[str, str]] = [
@@ -242,6 +245,7 @@ def dispatch_to_dict(d: models.EmailDispatch, names: dict[str, str] | None = Non
         "subject": d.subject,
         "body_html": d.body_html,
         "is_edited": d.is_edited,
+        "template_id": d.template_id,
         "txn_count": d.txn_count,
         "total_amount": float(d.total_amount),
         "status": d.status,
@@ -441,6 +445,176 @@ def update_partner(partner_id: int, data: PartnerIn, db: Session = Depends(get_d
     return partner_to_dict(partner)
 
 
+# ---------------------------------------------------------------- email templates
+
+def require_user(user: models.User = Depends(auth.get_current_user)) -> models.User:
+    """Templates belong to the users who prepare the emails; admins only read them."""
+    if user.role == "admin":
+        raise HTTPException(403, "Email templates are managed by users.")
+    return user
+
+
+def template_for(db: Session, mail_type: str, template_id: int | None) -> models.EmailTemplate | None:
+    """The email's own template if it still exists, else the default of its mail type (None: no template)."""
+    template = db.get(models.EmailTemplate, template_id) if template_id else None
+    if template is None or template.mail_type != mail_type:
+        template = db.query(models.EmailTemplate).filter_by(mail_type=mail_type, is_default=True).first()
+    return template
+
+
+def template_to_dict(t: models.EmailTemplate, names: dict[str, str]) -> dict:
+    return {
+        "id": t.id,
+        "name": t.name,
+        "mail_type": t.mail_type,
+        "mail_type_label": MAIL_TYPE_NAMES.get(t.mail_type, t.mail_type),
+        "description": t.description,
+        "subject": t.subject,
+        "body_html": t.body_html,
+        "is_default": t.is_default,
+        "created_by_name": names.get(t.created_by, t.created_by),
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_by_name": names.get(t.updated_by, t.updated_by),
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
+
+class TemplateIn(BaseModel):
+    name: str
+    mail_type: Literal["inward", "outward"]
+    description: str = ""
+    subject: str
+    body_html: str
+    is_default: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("Enter a template name")
+        if len(value) > 100:
+            raise ValueError("Template name is too long (max 100 characters)")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def check_description(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if len(value) > 255:
+            raise ValueError("Description is too long (max 255 characters)")
+        return value
+
+    @field_validator("subject")
+    @classmethod
+    def check_subject(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("Subject cannot be empty")
+        if len(value) > 300:
+            raise ValueError("Subject is too long (max 300 characters)")
+        return value
+
+    @field_validator("body_html")
+    @classmethod
+    def check_body(cls, value: str) -> str:
+        if not re.sub(r"<[^>]*>|&nbsp;|\s", "", value):
+            raise ValueError("The email body cannot be empty")
+        return value.strip()
+
+
+def check_template(db: Session, data: TemplateIn, template_id: int | None = None) -> None:
+    unknown = unknown_placeholders(data.subject, data.body_html)
+    if unknown:
+        raise HTTPException(400, "Unknown placeholder(s): " + ", ".join("{{%s}}" % u for u in unknown)
+                            + ". Use: " + ", ".join("{{%s}}" % p for p in PLACEHOLDERS) + ".")
+    for other in db.query(models.EmailTemplate).filter(models.EmailTemplate.id != (template_id or 0)).all():
+        if other.name.casefold() == data.name.casefold():
+            raise HTTPException(400, f"A template named \"{other.name}\" already exists.")
+
+
+def make_default(db: Session, template: models.EmailTemplate) -> None:
+    """The only default of its mail type."""
+    db.query(models.EmailTemplate).filter(
+        models.EmailTemplate.mail_type == template.mail_type, models.EmailTemplate.id != template.id,
+    ).update({models.EmailTemplate.is_default: False})
+    template.is_default = True
+
+
+def list_templates_dicts(db: Session) -> list[dict]:
+    templates = db.query(models.EmailTemplate).order_by(
+        models.EmailTemplate.mail_type, models.EmailTemplate.is_default.desc(), models.EmailTemplate.name).all()
+    names = user_names(db, [n for t in templates for n in (t.created_by, t.updated_by)])
+    return [template_to_dict(t, names) for t in templates]
+
+
+@api.get("/api/email-templates")
+def list_templates(db: Session = Depends(get_db)):
+    return {"templates": list_templates_dicts(db),
+            "placeholders": [{"name": k, "description": v} for k, v in PLACEHOLDERS.items()]}
+
+
+@api.post("/api/email-templates", status_code=201)
+def create_template(data: TemplateIn, db: Session = Depends(get_db), user: models.User = Depends(require_user)):
+    check_template(db, data)
+    template = models.EmailTemplate(
+        name=data.name, mail_type=data.mail_type, description=data.description, subject=data.subject,
+        body_html=data.body_html, created_by=user.username, updated_by=user.username,
+    )
+    db.add(template)
+    db.flush()
+    has_default = db.query(models.EmailTemplate).filter_by(mail_type=data.mail_type, is_default=True).count()
+    if data.is_default or not has_default:  # the first template of a mail type is its default
+        make_default(db, template)
+    db.commit()
+    return list_templates_dicts(db)
+
+
+@api.put("/api/email-templates/{template_id}")
+def update_template(template_id: int, data: TemplateIn, db: Session = Depends(get_db),
+                    user: models.User = Depends(require_user)):
+    template = db.get(models.EmailTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template not found")
+    check_template(db, data, template_id)
+    if template.is_default and data.mail_type != template.mail_type:
+        raise HTTPException(400, "This is the default template of its mail type. "
+                                 "Make another template the default first, then change its mail type.")
+    if template.is_default and not data.is_default:
+        raise HTTPException(400, "Every mail type needs a default template. Make another template the default instead.")
+    template.name, template.mail_type, template.description = data.name, data.mail_type, data.description
+    template.subject, template.body_html = data.subject, data.body_html
+    template.updated_by = user.username
+    if data.is_default:
+        make_default(db, template)
+    db.commit()
+    return list_templates_dicts(db)
+
+
+@api.post("/api/email-templates/{template_id}/default")
+def set_default_template(template_id: int, db: Session = Depends(get_db), user: models.User = Depends(require_user)):
+    template = db.get(models.EmailTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template not found")
+    make_default(db, template)
+    db.commit()
+    return list_templates_dicts(db)
+
+
+@api.delete("/api/email-templates/{template_id}")
+def delete_template(template_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_user)):
+    """Drafts that used it go back to the default template the next time previews are refreshed."""
+    template = db.get(models.EmailTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "Template not found")
+    if template.is_default:
+        raise HTTPException(400, "The default template cannot be deleted. Make another template the default first.")
+    db.query(models.EmailDispatch).filter_by(template_id=template.id).update({models.EmailDispatch.template_id: None})
+    db.delete(template)
+    db.commit()
+    return list_templates_dicts(db)
+
+
 # ---------------------------------------------------------------- uploads
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -563,11 +737,22 @@ def get_upload_groups(upload_id: int, db: Session = Depends(get_db)):
 
 # ---------------------------------------------------------------- emails
 
+class PrepareIn(BaseModel):
+    # mail type -> template: every draft of that mail type is (re)built from it, manual edits included
+    templates: dict[Literal["inward", "outward"], int] = {}
+
+
 @api.post("/api/uploads/{upload_id}/prepare-emails")
-def prepare_emails(upload_id: int, db: Session = Depends(get_db)):
+def prepare_emails(upload_id: int, data: PrepareIn | None = None, db: Session = Depends(get_db)):
     """Build (or rebuild) one email per partner and mail type. Emails already SENT are never touched."""
     upload = get_upload_or_404(db, upload_id)
     partners = partners_by_name(db)
+    chosen = {}
+    for mail_type, template_id in (data.templates if data else {}).items():
+        template = db.get(models.EmailTemplate, template_id)
+        if not template or template.mail_type != mail_type:
+            raise HTTPException(400, f"Pick a {MAIL_TYPES[mail_type]} template (it may have been deleted).")
+        chosen[mail_type] = template
 
     errors = []
     notices = []  # emails prepared, but some addresses were left out
@@ -603,8 +788,13 @@ def prepare_emails(upload_id: int, db: Session = Depends(get_db)):
         if dispatch is None:
             dispatch = models.EmailDispatch(upload_id=upload.id, partner_id=partner.id, mail_type=mail_type)
             db.add(dispatch)
+        if mail_type in chosen:
+            dispatch.template_id = chosen[mail_type].id
+            dispatch.is_edited = False
         if not dispatch.is_edited:  # keep the user's manual edits
-            dispatch.subject, dispatch.body_html = build_email(partner.name, mail_type, txns)
+            template = template_for(db, mail_type, dispatch.template_id)
+            dispatch.template_id = template.id if template else None
+            dispatch.subject, dispatch.body_html = build_email(partner.name, mail_type, txns, template)
             dispatch.is_edited = False
         dispatch.to_emails = ",".join(to_list)
         dispatch.cc_emails = ",".join(settings.get("cc_emails"))
@@ -691,7 +881,33 @@ def discard_email_edits(email_id: int, db: Session = Depends(get_db),
     if dispatch.status != "PREPARED":
         txns = dispatch_transactions(dispatch)
         if txns:
-            dispatch.subject, dispatch.body_html = build_email(dispatch.partner.name, dispatch.mail_type, txns)
+            template = template_for(db, dispatch.mail_type, dispatch.template_id)
+            dispatch.subject, dispatch.body_html = build_email(dispatch.partner.name, dispatch.mail_type, txns, template)
+    db.commit()
+    return dispatch_to_dict(dispatch)
+
+
+class ApplyTemplateIn(BaseModel):
+    template_id: int
+
+
+@api.put("/api/emails/{email_id}/template")
+def apply_template(email_id: int, data: ApplyTemplateIn, db: Session = Depends(get_db),
+                   user: models.User = Depends(auth.get_current_user)):
+    """Rebuild this email from another template. Manual edits are replaced."""
+    dispatch = get_editable_dispatch_or_error(db, email_id, user)
+    template = db.get(models.EmailTemplate, data.template_id)
+    if not template:
+        raise HTTPException(404, "Template not found. It may have been deleted.")
+    if template.mail_type != dispatch.mail_type:
+        raise HTTPException(400, f"\"{template.name}\" is a {MAIL_TYPE_NAMES[template.mail_type]} template; "
+                                 f"this email is {MAIL_TYPE_NAMES.get(dispatch.mail_type, dispatch.mail_type)}.")
+    txns = dispatch_transactions(dispatch)
+    if not txns:
+        raise HTTPException(400, "This email has no transactions to build it from.")
+    dispatch.template_id = template.id
+    dispatch.subject, dispatch.body_html = build_email(dispatch.partner.name, dispatch.mail_type, txns, template)
+    dispatch.is_edited = False
     db.commit()
     return dispatch_to_dict(dispatch)
 

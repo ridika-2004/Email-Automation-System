@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatAmount } from "../api";
-import MailTypeBadge from "../components/MailTypeBadge";
+import MailTypeBadge, { MAIL_TYPE_LABELS } from "../components/MailTypeBadge";
 import Modal from "../components/Modal";
 import { Alert, badge, btnCls, card, cx, h2, link, num, page, rowCls, table } from "../components/ui";
 
@@ -14,17 +14,21 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
   const [submitted, setSubmitted] = useState(0);   // > 0: show the "pending" pop-up
   const [message, setMessage] = useState(null);    // { type, text }
   const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
+  const [templates, setTemplates] = useState([]); // Email Templates: one can be picked per email
 
   // Every time this page opens, (re)build the previews from the current partner config
   useEffect(() => {
     prepare();
   }, [uploadId]);
+  useEffect(() => {
+    api.listTemplates().then((data) => setTemplates(data.templates)).catch(() => setTemplates([]));
+  }, []);
 
-  async function prepare() {
+  async function prepare(chosenTemplates) {
     setBusy("preparing");
     setMessage(null);
     try {
-      const data = await api.prepareEmails(uploadId);
+      const data = await api.prepareEmails(uploadId, chosenTemplates);
       setEmails(data.emails);
       setWarnings(data.errors);
       setNotices(data.notices || []);
@@ -60,8 +64,18 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
     setEmails((list) => list.map((e) => (e.id === updated.id ? updated : e)));
   }
 
+  // One template for every draft of a mail type
+  async function chooseTemplate(mailType, templateId) {
+    const edited = emails.filter((e) => isDraft(e) && e.mail_type === mailType && e.is_edited).length;
+    if (edited && !window.confirm(`${edited} ${MAIL_TYPE_LABELS[mailType]} email(s) were edited by hand. Replace the edits with this template?`)) return;
+    await prepare({ [mailType]: templateId });
+  }
+
   const selected = emails.find((e) => e.id === selectedId);
   const draftCount = emails.filter(isDraft).length;
+  const templateName = (id) => templates.find((t) => t.id === id)?.name;
+  // Mail types that have drafts, in the template bar
+  const draftTypes = Object.keys(MAIL_TYPE_LABELS).filter((type) => emails.some((e) => isDraft(e) && e.mail_type === type));
 
   return (
     <div className={page}>
@@ -75,7 +89,7 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
             </p>
           </div>
           <div className="flex gap-2">
-            <button className={btnCls()} onClick={prepare} disabled={!!busy}>
+            <button className={btnCls()} onClick={() => prepare()} disabled={!!busy}>
               {busy === "preparing" ? "Refreshing..." : "Refresh previews"}
             </button>
             <button
@@ -90,6 +104,35 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
             </button>
           </div>
         </div>
+
+        {draftTypes.length > 0 && templates.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-line bg-gray-50 px-3 py-2.5">
+            <span className="text-[13px] font-semibold">Template</span>
+            {draftTypes.map((type) => {
+              const drafts = emails.filter((e) => isDraft(e) && e.mail_type === type);
+              const ids = new Set(drafts.map((e) => e.template_id));
+              const value = ids.size === 1 ? [...ids][0] ?? "" : "";
+              return (
+                <label key={type} className="flex items-center gap-2 text-[13px]">
+                  <MailTypeBadge type={type} />
+                  <select
+                    className="rounded border border-line bg-white px-2 py-1 text-[13px] focus:border-brand focus:outline-none disabled:opacity-60"
+                    value={value}
+                    disabled={!!busy || hasUnsavedEdits}
+                    title={hasUnsavedEdits ? "Save or discard your edits first" : `Used for all ${drafts.length} ${MAIL_TYPE_LABELS[type]} email(s)`}
+                    onChange={(e) => chooseTemplate(type, Number(e.target.value))}
+                  >
+                    {value === "" && <option value="">{ids.size > 1 ? "Different per email" : "Standard wording"}</option>}
+                    {templates.filter((t) => t.mail_type === type).map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}{t.is_default ? " (default)" : ""}</option>
+                    ))}
+                  </select>
+                </label>
+              );
+            })}
+            <span className="text-xs text-muted">Applies to every email of that type not yet sent for approval. Change a single email in its preview below.</span>
+          </div>
+        )}
 
         {message && <Alert type={message.type}>{message.text}</Alert>}
 
@@ -112,7 +155,7 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
         <table className={table}>
           <thead>
             <tr>
-              <th>Partner</th><th>Mail Type</th><th>To</th><th className={num}>Txns</th>
+              <th>Partner</th><th>Mail Type</th><th>Template</th><th>To</th><th className={num}>Txns</th>
               <th className={num}>Amount (BDT)</th><th>Status</th><th>Details</th>
             </tr>
           </thead>
@@ -125,6 +168,7 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
               >
                 <td><b>{e.partner_name}</b></td>
                 <td><MailTypeBadge type={e.mail_type} /></td>
+                <td className="text-xs">{templateName(e.template_id) || <span className="text-muted">Standard wording</span>}</td>
                 <td className="text-xs">{e.to.join(", ")}</td>
                 <td className={num}>{e.txn_count}</td>
                 <td className={num}>{formatAmount(e.total_amount)}</td>
@@ -152,6 +196,7 @@ export default function EmailsPage({ uploadId, config, onOpenPending }) {
           key={selected.id}
           email={selected}
           config={config}
+          templates={templates}
           locked={!!busy}
           onSaved={replaceEmail}
           onReset={prepare}
@@ -191,7 +236,8 @@ export function StatusBadge({ status }) {
 // Preview card with an Edit / Preview toggle. Edits stay a local draft
 // until "Save changes"; the Preview tab shows the draft as it will be sent.
 // canEdit: drafts can be edited by their user; emails waiting for approval only by admins.
-export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyChange, canEdit = email.status === "PREPARED" }) {
+// templates (Email Templates): when given, a draft can be rebuilt from another template of its mail type.
+export function EmailPreview({ email, config, templates, locked, onSaved, onReset, onDirtyChange, canEdit = email.status === "PREPARED" }) {
   const [mode, setMode] = useState("preview");     // "preview" | "edit"
   const [draft, setDraft] = useState(null);         // { subject, body_html } while editing
   const [editorSeed, setEditorSeed] = useState(""); // HTML loaded into the editor when it opens
@@ -202,6 +248,8 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
   const isSent = !canEdit || email.status === "SENT";
   const dirty = !!draft && (draft.subject !== email.subject || draft.body_html !== email.body_html);
   const shown = draft || email;
+  const choices = (templates || []).filter((t) => t.mail_type === email.mail_type);
+  const canPickTemplate = choices.length > 0 && canEdit && email.status === "PREPARED";
 
   useEffect(() => {
     onDirtyChange(dirty);
@@ -254,6 +302,16 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
     setDraft(null);
     setMode("preview");
     setError("");
+  }
+
+  async function applyTemplate(templateId) {
+    if (email.is_edited && !window.confirm("Replace your manual edits with this template?")) return;
+    setError("");
+    try {
+      onSaved(await api.applyTemplate(email.id, templateId));
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
   async function resetToGenerated() {
@@ -314,6 +372,24 @@ export function EmailPreview({ email, config, locked, onSaved, onReset, onDirtyC
       {error && <Alert type="error">{error}</Alert>}
 
       <div className="mb-3 rounded-md border border-line [&>div:last-child]:border-b-0 [&>div>span:first-child]:inline-block [&>div>span:first-child]:w-[70px] [&>div>span:first-child]:text-muted [&>div]:border-b [&>div]:border-line [&>div]:px-3 [&>div]:py-2">
+        {canPickTemplate && (
+          <div>
+            <span>Template</span>
+            <select
+              className="max-w-[calc(100%-80px)] rounded border border-line bg-white px-2 py-1 text-[13px] focus:border-brand focus:outline-none disabled:opacity-60"
+              value={email.template_id ?? ""}
+              disabled={locked || mode === "edit" || dirty}
+              title={mode === "edit" || dirty ? "Save or discard your edits first" : "Rebuild this email from another template"}
+              onChange={(e) => applyTemplate(Number(e.target.value))}
+            >
+              {!choices.some((t) => t.id === email.template_id) && <option value="">Standard wording</option>}
+              {choices.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}{t.is_default ? " (default)" : ""}</option>
+              ))}
+            </select>
+            {email.is_edited && <span className="!w-auto pl-2 text-xs text-muted">edited by hand after applying it</span>}
+          </div>
+        )}
         <div><span>From</span>{config?.mail_from}</div>
         <div><span>To</span>{email.to.join(", ")}</div>
         <div><span>CC</span>{email.cc.join(", ")}</div>
