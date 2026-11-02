@@ -213,6 +213,18 @@ export const api = {
   setRemarks: (id, remarks) => request(`/api/emails/${id}/remarks`, json("PUT", { remarks })),
   followupDraft: (id) => request(`/api/emails/${id}/followup-draft`),
   sendFollowup: (id, followup) => request(`/api/emails/${id}/followups`, json("POST", followup)),
+
+  // partners' replies, read from the sending mailbox. Summary: { unread, total, inbox, reply_to (= MAIL_FROM) }
+  replySummary: () => request("/api/replies/summary"),
+  // filters: { show: "all" | "unread", q, partner_id }
+  listReplies: (filters = {}) => request(`/api/replies?${queryString(filters)}`),
+  getReply: (id) => request(`/api/replies/${id}`), // also marks it as read
+  setReplyRead: (id, read) => request(`/api/replies/${id}/read`, json("PUT", { read })),
+  markAllRepliesRead: () => request("/api/replies/read-all", { method: "POST" }),
+  downloadReplyAttachment: (replyId, attachment) =>
+    download(`/api/replies/${replyId}/attachments/${attachment.id}`, attachment.filename),
+  // admins only
+  checkInboxNow: () => request("/api/replies/check-now", { method: "POST" }),
 };
 
 export const formatAmount = (n) =>

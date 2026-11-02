@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatDateTime } from "../api";
 import { Alert, btnCls, card, cx, h2, input, label, page } from "../components/ui";
 
-const FIELDS = ["followup_due_days", "auto_followup_enabled", "auto_followup_max", "cc_emails", "reply_to"];
+const FIELDS = ["followup_due_days", "auto_followup_enabled", "auto_followup_max", "cc_emails"];
 
 // The form keeps CC addresses as text (one per line) and numbers as strings while typing
 const toForm = (s) => ({ ...pick(s), cc_emails: s.cc_emails.join("\n"),
@@ -12,11 +12,10 @@ const fromForm = (f) => ({
   followup_due_days: Number(f.followup_due_days),
   auto_followup_max: Number(f.auto_followup_max),
   cc_emails: f.cc_emails.split(/[\n,;]+/).map((a) => a.trim()).filter(Boolean),
-  reply_to: f.reply_to.trim(),
 });
 const pick = (s) => Object.fromEntries(FIELDS.map((k) => [k, s[k]]));
 
-// Email settings: when a follow-up is due, automatic follow-ups, CC / Reply-To and the mail server.
+// Email settings: when a follow-up is due, automatic follow-ups, CC and the mail server.
 // Everyone can see them; only admins can change them.
 export default function EmailConfigPage({ isAdmin, onSaved }) {
   const [settings, setSettings] = useState(null);
@@ -140,12 +139,13 @@ export default function EmailConfigPage({ isAdmin, onSaved }) {
               onChange={set("cc_emails")} disabled={disabled} placeholder="one address per line" />
             <small className="font-normal text-muted">One address per line (up to 20). Leave empty for no CC.</small>
           </label>
-          <label className={label}>
-            Reply-To address
-            <input className={input} type="email" value={form.reply_to} onChange={set("reply_to")} disabled={disabled}
-              placeholder={settings.smtp.mail_from} />
-            <small className="font-normal text-muted">Partners' replies go here. Empty: replies go to the sender ({settings.smtp.mail_from}).</small>
-          </label>
+          <div className={label}>
+            Replies go to
+            <div className="rounded-md border border-line bg-gray-50 px-2.5 py-2 text-sm font-normal">{settings.smtp.mail_from}</div>
+            <small className="font-normal text-muted">
+              The sender (MAIL_FROM in the server's .env). Replies are read from this mailbox into Partner Replies.
+            </small>
+          </div>
         </div>
       </section>
 
@@ -198,7 +198,7 @@ function MailServerCard({ smtp, isAdmin }) {
   const rows = [
     ["Server", `${smtp.host}:${smtp.port}`],
     ["Encryption", smtp.use_tls ? "STARTTLS" : "None"],
-    ["Sign-in", smtp.user || "None"],
+    ["Sign-in", !smtp.user ? "None" : `${smtp.user} (password)`],
     ["Sender (From)", smtp.mail_from],
     ["Attempts per email", smtp.max_attempts],
   ];

@@ -205,7 +205,7 @@ CREATE TABLE email_dispatches (
 CREATE TABLE email_events (   -- follow-up history: status changes, follow-up emails, notes
   id           INT AUTO_INCREMENT PRIMARY KEY,
   dispatch_id  INT          NOT NULL,
-  kind         VARCHAR(20)  NOT NULL,          -- status / followup / note / remarks
+  kind         VARCHAR(20)  NOT NULL,          -- status / followup / note / remarks / reply
   reply_status VARCHAR(20)  NULL,
   note         TEXT         NULL,
   subject      VARCHAR(300) NULL,
@@ -214,14 +214,62 @@ CREATE TABLE email_events (   -- follow-up history: status changes, follow-up em
   cc_emails    TEXT         NULL,
   ok           BOOLEAN      NOT NULL DEFAULT TRUE,
   error        TEXT         NULL,
+  message_id   VARCHAR(255) NULL,              -- kind followup: its Message-ID (replies to it are matched)
+  reply_id     INT          NULL,              -- kind reply: the partner's reply (email_replies)
   created_by   VARCHAR(30)  NOT NULL,
   created_at   DATETIME     NOT NULL,
   INDEX (dispatch_id),
   FOREIGN KEY (dispatch_id) REFERENCES email_dispatches(id) ON DELETE CASCADE
 );
 
+CREATE TABLE email_replies (   -- partners' replies, read from the sending mailbox (only replies to our emails)
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  dispatch_id INT          NOT NULL,           -- the email it answers
+  message_id  VARCHAR(255) NOT NULL UNIQUE,    -- the reply's own Message-ID (never stored twice)
+  from_email  VARCHAR(254) NOT NULL,
+  from_name   VARCHAR(200) NOT NULL DEFAULT '',
+  to_emails   TEXT         NOT NULL,
+  cc_emails   TEXT         NOT NULL,
+  subject     VARCHAR(500) NOT NULL,
+  body_html   MEDIUMTEXT   NOT NULL,
+  snippet     VARCHAR(300) NOT NULL DEFAULT '',
+  matched_by  VARCHAR(20)  NOT NULL,           -- thread (reply headers) / subject
+  received_at DATETIME     NOT NULL,
+  found_at    DATETIME     NOT NULL,
+  INDEX (dispatch_id),
+  INDEX (received_at),
+  FOREIGN KEY (dispatch_id) REFERENCES email_dispatches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE email_reply_attachments (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  reply_id     INT          NOT NULL,
+  filename     VARCHAR(255) NOT NULL,
+  content_type VARCHAR(100) NOT NULL,
+  size         INT          NOT NULL,
+  content      LONGBLOB     NOT NULL,
+  INDEX (reply_id),
+  FOREIGN KEY (reply_id) REFERENCES email_replies(id) ON DELETE CASCADE
+);
+
+CREATE TABLE email_reply_reads (   -- replies each user has opened; the rest are "new" (notification count)
+  reply_id INT      NOT NULL,
+  user_id  INT      NOT NULL,
+  read_at  DATETIME NOT NULL,
+  PRIMARY KEY (reply_id, user_id),
+  FOREIGN KEY (reply_id) REFERENCES email_replies(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id)  REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE inbox_state (   -- how far the mailbox has been read (IMAP UIDs)
+  mailbox     VARCHAR(255) PRIMARY KEY,        -- user@host/folder
+  uidvalidity BIGINT       NOT NULL,
+  last_uid    BIGINT       NOT NULL DEFAULT 0,
+  updated_at  DATETIME     NOT NULL
+);
+
 CREATE TABLE app_settings (   -- Email Configuration page: one row per changed setting (others use the .env default)
-  `key`      VARCHAR(50) PRIMARY KEY,         -- followup_due_days / auto_followup_enabled / auto_followup_max / cc_emails / reply_to
+  `key`      VARCHAR(50) PRIMARY KEY,         -- followup_due_days / auto_followup_enabled / auto_followup_max / cc_emails
   value      TEXT        NOT NULL,            -- JSON
   updated_by VARCHAR(30) NULL,
   updated_at DATETIME    NOT NULL

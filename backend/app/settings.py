@@ -21,8 +21,6 @@ DEFAULTS = {
     "auto_followup_max": config.AUTO_FOLLOWUP_MAX,
     # Copied on every new email
     "cc_emails": config.CC_EMAILS,
-    # Partners' replies go to this address
-    "reply_to": config.REPLY_TO,
 }
 
 _cache: dict = {}

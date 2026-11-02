@@ -17,7 +17,9 @@ const isWide = () => typeof window === "undefined" || window.matchMedia(WIDE).ma
 const readPinned = () => { try { return localStorage.getItem(PIN_KEY) === "1"; } catch { return false; } };
 const savePinned = (v) => { try { localStorage.setItem(PIN_KEY, v ? "1" : "0"); } catch { /* not saved */ } };
 
-// sections: [{ title, items: [{ id, label, icon, disabled, hint, sub, onClick, danger }] }]
+// sections: [{ title, items: [{ id, label, icon, disabled, hint, sub, onClick, danger, badge, alert }] }]
+// badge: a count next to the label; alert: it is a notification (red), also shown as a dot on the
+// menu button / edge arrow while the sidebar is closed
 export function useSidebarPin() {
   const [pinned, setPinned] = useState(readPinned);
   const [wide, setWide] = useState(isWide);
@@ -36,6 +38,8 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
   const timer = useRef(null);
   const panel = useRef(null);
   const visible = open || pinned;
+  const alerts = sections.flatMap((s) => s.items).filter((i) => i.alert && i.badge).map((i) => `${i.badge} ${i.label}`);
+  const alertText = alerts.length ? ` (new: ${alerts.join(", ")})` : "";
 
   const later = (fn, ms) => { clearTimeout(timer.current); timer.current = setTimeout(fn, ms); };
   const cancel = () => clearTimeout(timer.current);
@@ -62,12 +66,13 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
       <div className="sticky top-0 z-20 flex items-center gap-2 border-b border-line bg-white px-2 py-2 min-[900px]:hidden">
         <button
           type="button"
-          aria-label="Open menu"
+          aria-label={`Open menu${alertText}`}
           aria-expanded={open}
-          className="rounded-md p-2 text-ink hover:bg-gray-100"
+          className="relative rounded-md p-2 text-ink hover:bg-gray-100"
           onClick={() => setOpen(true)}
         >
           <Icon name="menu" className="h-5 w-5" />
+          {alerts.length > 0 && <AlertDot className="right-1 top-1" />}
         </button>
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand text-white" aria-hidden="true">
@@ -80,20 +85,22 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
         <div className="group fixed inset-y-0 left-0 z-30 w-5 max-[899px]:hidden" aria-hidden={visible}>
           <button
             type="button"
-            aria-label="Open menu"
-            title="Menu"
+            aria-label={`Open menu${alertText}`}
+            title={`Menu${alertText}`}
             className={cx(
               "absolute left-0 top-1/2 flex h-14 w-6 -translate-y-1/2 items-center justify-center rounded-r-lg",
               "border border-l-0 border-line bg-white text-muted shadow-menu transition-opacity duration-150",
               "hover:bg-brand hover:text-white focus-visible:opacity-100 focus-visible:outline-none",
               "group-hover:opacity-100 [@media(hover:none)]:opacity-100",
-              visible ? "pointer-events-none opacity-0" : "opacity-0",
+              // a notification keeps the arrow in sight
+              visible ? "pointer-events-none opacity-0" : alerts.length ? "opacity-100" : "opacity-0",
             )}
             onMouseEnter={() => later(() => setOpen(true), OPEN_DELAY)}
             onMouseLeave={cancel}
             onClick={() => { cancel(); setOpen(true); }}
           >
             <Icon name="chevronRight" className="h-4 w-4" />
+            {alerts.length > 0 && <AlertDot className="-right-1 -top-1" />}
           </button>
         </div>
       )}
@@ -159,9 +166,14 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
                     >
                       {item.icon && <Icon name={item.icon} className="h-4 w-4 shrink-0" />}
                       <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {item.badge != null && (
+                      {item.badge != null && (item.alert ? (
+                        item.badge > 0 && (
+                          <span className="min-w-[20px] rounded-full bg-brand px-1.5 text-center text-[11px] font-bold leading-5 text-white"
+                            aria-label={`${item.badge} new`}>{item.badge > 99 ? "99+" : item.badge}</span>
+                        )
+                      ) : (
                         <span className="rounded-full bg-gray-100 px-1.5 text-[11px] font-semibold text-muted">{item.badge}</span>
-                      )}
+                      ))}
                     </button>
                   </li>
                 ))}
@@ -189,8 +201,14 @@ export default function Sidebar({ sections, active, onSelect, user, footer, pinn
   );
 }
 
+// Small red dot on a button: something new in the menu
+function AlertDot({ className }) {
+  return <span className={cx("absolute h-2.5 w-2.5 rounded-full bg-brand ring-2 ring-white", className)} aria-hidden="true" />;
+}
+
 const ICONS = {
   chevronRight: <path d="m9 6 6 6-6 6" />,
+  chevronLeft: <path d="m15 6-6 6 6 6" />,
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
   mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></>,
   home: <><path d="M3 11 12 4l9 7" /><path d="M5 10v10h14V10" /><path d="M10 20v-6h4v6" /></>,
@@ -199,6 +217,7 @@ const ICONS = {
   edit: <><path d="M4 20h4L19 9l-4-4L4 16v4Z" /><path d="m13 7 4 4" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   send: <><path d="M21 3 10 14" /><path d="m21 3-7 18-4-7-7-4 18-7Z" /></>,
+  inbox: <><path d="M3 13h5l1.5 3h5L16 13h5" /><path d="M5.5 5h13L21 13v6H3v-6l2.5-8Z" /></>,
   building: <><rect x="4" y="3" width="16" height="18" rx="1" /><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1" /></>,
   template: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
   sliders: <><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></>,

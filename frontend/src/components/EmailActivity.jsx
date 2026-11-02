@@ -5,17 +5,26 @@ import { Alert, btnCls, card, cx, link } from "./ui";
 
 const STATUS_LABELS = { not_received: "Awaiting reply", received: "Reply received", reconciled: "Reconciled" };
 
-// Follow-up history of one sent email: reply-status changes, follow-ups (open one to read it) and notes.
+// Follow-up history of one sent email: reply-status changes, follow-ups and partners' replies (open one
+// to read it) and notes.
 // Admins can add notes. Reloads when the email's status or follow-up count changes.
 export default function EmailActivity({ email, isAdmin }) {
   const [events, setEvents] = useState(null);
   const [openEvent, setOpenEvent] = useState(null);
+  const [replies, setReplies] = useState({}); // reply id -> the partner's reply, once opened
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const load = () => api.emailEvents(email.id).then(setEvents).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [email.id, email.reply_status, email.followup_count]);
+
+  function toggleReply(ev) {
+    setOpenEvent((id) => (id === ev.id ? null : ev.id));
+    if (!replies[ev.reply_id]) {
+      api.getReply(ev.reply_id).then((r) => setReplies((all) => ({ ...all, [r.id]: r }))).catch((e) => setError(e.message));
+    }
+  }
 
   async function addNote(e) {
     e.preventDefault();
@@ -61,7 +70,18 @@ export default function EmailActivity({ email, isAdmin }) {
                 <TimelineTitle event={ev} />
                 <span className="text-xs text-muted">{ev.created_by_name} · {formatDateTime(ev.created_at)}</span>
               </div>
-              {ev.note && <p className="mt-1.5 whitespace-pre-wrap rounded-md border border-line bg-gray-50 px-2 py-1.5 text-[13px]">{ev.note}</p>}
+              {ev.note && ev.kind !== "reply" && <p className="mt-1.5 whitespace-pre-wrap rounded-md border border-line bg-gray-50 px-2 py-1.5 text-[13px]">{ev.note}</p>}
+              {ev.kind === "reply" && (
+                <>
+                  <div className="text-xs text-muted">{ev.subject}</div>
+                  <button type="button" className={link} onClick={() => toggleReply(ev)}>
+                    {openEvent === ev.id ? "▾ Hide reply" : "▸ Show reply"}
+                  </button>
+                  {openEvent === ev.id && (replies[ev.reply_id]
+                    ? <EmailView className="mt-1.5 max-h-[300px]" html={replies[ev.reply_id].body_html} />
+                    : <div className="text-xs text-muted">Loading...</div>)}
+                </>
+              )}
               {ev.kind === "followup" && (
                 <>
                   <div className="text-xs text-muted">To {ev.to.join(", ")}{ev.cc.length > 0 && ` · CC ${ev.cc.join(", ")}`}</div>
@@ -101,11 +121,12 @@ export default function EmailActivity({ email, isAdmin }) {
 const item = "relative pb-3.5 pl-6 last:pb-0 before:absolute before:bottom-0 before:left-[5px] before:top-4 before:w-0.5 " +
   "before:bg-line last:before:hidden";
 const dot = "absolute left-0 top-1 h-3 w-3 rounded-full border-2 border-white ring-1 ring-gray-300";
-const DOT = {"status": "bg-blue-500", "followup": "bg-brand", "note": "bg-amber-500", "remarks": "bg-violet-500", "failed": "bg-red-900", "sent": "bg-green-600"};
+const DOT = {"reply": "bg-sky-500", "status": "bg-blue-500", "followup": "bg-brand", "note": "bg-amber-500", "remarks": "bg-violet-500", "failed": "bg-red-900", "sent": "bg-green-600"};
 
 function TimelineTitle({ event }) {
   if (event.kind === "status") return <span>Marked as <b>{STATUS_LABELS[event.reply_status] || event.reply_status}</b></span>;
   if (event.kind === "note") return <b>Note</b>;
+  if (event.kind === "reply") return <span>Reply from <b>{event.note}</b></span>;
   if (event.kind === "remarks") return <b>{event.note ? "Remarks updated" : "Remarks cleared"}</b>;
   return event.ok ? <b>Follow-up sent</b> : <b className="text-red-700">Follow-up failed</b>;
 }

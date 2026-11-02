@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, auth, SESSION_EXPIRED_EVENT } from "./api";
 import AuthPage from "./pages/AuthPage";
 import AccountPage from "./pages/AccountPage";
@@ -12,7 +12,8 @@ import SentPage from "./pages/SentPage";
 import EmailConfigPage from "./pages/EmailConfigPage";
 import TemplatesPage from "./pages/TemplatesPage";
 import AdminHomePage from "./pages/AdminHomePage";
-import Sidebar, { useSidebarPin } from "./components/Sidebar";
+import RepliesPage from "./pages/RepliesPage";
+import Sidebar, { Icon, useSidebarPin } from "./components/Sidebar";
 import { cx } from "./components/ui";
 
 // Title and one-line description shown at the top of each page
@@ -23,12 +24,16 @@ const PAGES = {
   emails: { title: "Email Preview & Send", subtitle: "Check and edit each partner's email, then send them for approval" },
   pending: { title: "Pending Mails", subtitle: "Emails waiting for an admin to send them" },
   sent: { title: "Sent Mails", subtitle: "Emails sent to partners, their replies and follow-ups" },
+  replies: { title: "Partner Replies", subtitle: "Partners' replies to our emails, read from the sending mailbox" },
   partners: { title: "Partner Configuration", subtitle: "Partners and the addresses their emails go to" },
   templates: { title: "Email Templates", subtitle: "Your templates for each case: pick one for each partner's email" },
   emailConfig: { title: "Email Configuration", subtitle: "Follow-up timing, automatic follow-ups, recipients and the mail server" },
   account: { title: "My Profile", subtitle: "Your details, password, devices and sign-in activity" },
   users: { title: "Users & Security", subtitle: "Accounts, roles and the security log" },
 };
+
+const REPLY_CHECK_MS = 30000; // how often the app asks for new replies (the backend reads the mailbox every few minutes)
+const APP_TITLE = document.title;
 
 const hasResetLink = () => new URLSearchParams(window.location.search).has("reset_token");
 
@@ -89,7 +94,45 @@ function MainApp({ user, onUserChange, onSignOut }) {
   const loadConfig = () => api.getConfig().then(setConfig).catch(() => setConfig(null));
   useEffect(() => { loadConfig(); }, []);
 
-  const open = (id) => { setTab(id); window.scrollTo({ top: 0 }); };
+  // New partner replies: count in the sidebar and the tab title, and a notice when more arrive
+  const [replies, setReplies] = useState(null); // { unread, total, inbox, reply_to }
+  const [newReplies, setNewReplies] = useState(0); // replies found since the last notice
+  const lastTotal = useRef(null);
+  useEffect(() => {
+    const check = () => { if (document.visibilityState === "visible") api.replySummary().then(updateReplies).catch(() => {}); };
+    check();
+    const timer = setInterval(check, REPLY_CHECK_MS);
+    document.addEventListener("visibilitychange", check);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", check); };
+  }, []);
+  function updateReplies(summary) {
+    if (lastTotal.current != null && summary.total > lastTotal.current) {
+      setNewReplies((n) => n + summary.total - lastTotal.current);
+    }
+    lastTotal.current = summary.total;
+    setReplies(summary);
+  }
+  useEffect(() => {
+    document.title = replies?.unread ? `(${replies.unread}) ${APP_TITLE}` : APP_TITLE;
+    return () => { document.title = APP_TITLE; };
+  }, [replies?.unread]);
+  useEffect(() => { if (tab === "replies") setNewReplies(0); }, [tab, newReplies]); // already looking at them
+  useEffect(() => {
+    if (!newReplies) return;
+    const t = setTimeout(() => setNewReplies(0), 12000);
+    return () => clearTimeout(t);
+  }, [newReplies]);
+
+  const [visited, setVisited] = useState([]); // pages opened before this one, for the Back button
+  const open = (id) => {
+    if (id !== tab) { setVisited((pages) => [...pages, tab]); setTab(id); }
+    window.scrollTo({ top: 0 });
+  };
+  const goBack = () => {
+    setTab(visited[visited.length - 1]);
+    setVisited((pages) => pages.slice(0, -1));
+    window.scrollTo({ top: 0 });
+  };
   const noUpload = { disabled: !upload, hint: "Upload a file first" };
 
   // Users prepare the emails; admins send them from Pending Mails and manage partners and users
@@ -109,6 +152,7 @@ function MainApp({ user, onUserChange, onSignOut }) {
       items: [
         { id: "pending", label: "Pending Mails", icon: "clock" },
         { id: "sent", label: "Sent Mails", icon: "send" },
+        { id: "replies", label: "Partner Replies", icon: "inbox", badge: replies?.unread || 0, alert: true },
       ],
     },
     {
@@ -148,6 +192,13 @@ function MainApp({ user, onUserChange, onSignOut }) {
       <div className="mx-auto max-w-[1200px] px-4 pb-10 min-[640px]:px-8">
         <header className="mb-5 flex flex-wrap items-end justify-between gap-2 border-b border-line pb-3.5 pt-6 max-[640px]:mb-3.5 max-[640px]:pt-4">
           <div>
+            {visited.length > 0 && (
+              <button type="button" onClick={goBack}
+                className="-ml-1.5 mb-1.5 flex items-center gap-1 rounded-md py-1 pl-0.5 pr-2 text-[13px] font-semibold text-muted hover:bg-gray-100 hover:text-ink">
+                <Icon name="chevronLeft" className="h-4 w-4 shrink-0" />
+                Back to {PAGES[visited[visited.length - 1]].title}
+              </button>
+            )}
             <h1 className="text-xl font-bold">{info.title}</h1>
             <p className="mt-1 text-muted">{info.subtitle}</p>
           </div>
@@ -169,6 +220,7 @@ function MainApp({ user, onUserChange, onSignOut }) {
           )}
           {tab === "pending" && <PendingPage config={config} isAdmin={isAdmin} />}
           {tab === "sent" && <SentPage config={config} isAdmin={isAdmin} />}
+          {tab === "replies" && <RepliesPage summary={replies} onChange={updateReplies} isAdmin={isAdmin} />}
           {tab === "partners" && <PartnersPage isAdmin={isAdmin} />}
           {tab === "templates" && !isAdmin && <TemplatesPage />}
           {tab === "emailConfig" && <EmailConfigPage isAdmin={isAdmin} onSaved={loadConfig} />}
@@ -176,6 +228,25 @@ function MainApp({ user, onUserChange, onSignOut }) {
           {tab === "users" && isAdmin && <UsersPage currentUser={user} />}
         </main>
       </div>
+
+      {newReplies > 0 && (
+        <ReplyNotice count={newReplies} onOpen={tab === "replies" ? null : () => { setNewReplies(0); open("replies"); }}
+          onClose={() => setNewReplies(0)} />
+      )}
+    </div>
+  );
+}
+
+// Pop-up in the corner when partners' replies arrive while the app is open
+function ReplyNotice({ count, onOpen, onClose }) {
+  return (
+    <div role="status" className="fixed bottom-4 right-4 z-50 flex max-w-[calc(100vw-32px)] items-center gap-3 rounded-lg border border-line bg-white px-4 py-3 shadow-modal">
+      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand" aria-hidden="true" />
+      <span className="text-sm">
+        <b>{count} new {count === 1 ? "reply" : "replies"}</b> from partners
+      </span>
+      {onOpen && <button className="text-sm font-semibold text-brand hover:underline" onClick={onOpen}>Open</button>}
+      <button className="rounded p-1 text-muted hover:bg-gray-100" onClick={onClose} aria-label="Dismiss">✕</button>
     </div>
   );
 }

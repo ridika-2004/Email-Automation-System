@@ -9,11 +9,13 @@ Flow:
   6. POST /api/pending-emails/send         -> send the ticked pending emails              (admins)
   7. GET  /api/sent-emails                 -> sent emails: search, partner filter, sort    (everyone)
   8. Follow-up of sent emails: reply status, follow-up emails, notes, history           (admins change, everyone reads)
-  9. GET/PUT /api/email-settings           -> follow-up days, automatic follow-ups, CC, Reply-To (admins change)
+  9. GET/PUT /api/email-settings           -> follow-up days, automatic follow-ups, CC (admins change)
  10. /api/email-templates                  -> email templates per mail type (users change, everyone reads)
+ 11. /api/replies                          -> partners' replies, read from the sending mailbox (everyone reads)
 
 Automatic follow-ups: when switched on, a background thread sends the follow-up of every email
 that is due (see run_auto_followups), as the "system" user.
+Partners' replies: another background thread reads them from the mailbox (inbox.py).
 
 Every endpoint here needs a signed-in user (JWT). Changing partners and sending emails also
 need the admin role. Sign-in, sessions and password recovery live in auth.py; user management
@@ -26,14 +28,16 @@ import threading
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from sqlalchemy import and_, func, inspect, or_, text, update
+from sqlalchemy import and_, func, inspect, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
-from . import auth, config, models, settings, users
+from . import auth, config, inbox, models, settings, users
 from .database import Base, SessionLocal, create_database_if_missing, engine, get_db
 from .email_check import validate_real_email
 from .email_service import (
@@ -41,7 +45,7 @@ from .email_service import (
     send_email, transactions_xlsx, unknown_placeholders,
 )
 from .excel_parser import FileValidationError, build_template, parse_transactions, split_rows, to_xlsx
-from .seed import seed_partners, seed_templates
+from .seed import seed_templates
 
 app = FastAPI(title="NPSB Dispute Email Automation")
 
@@ -65,14 +69,15 @@ def on_startup():
     if config.JWT_SECRET_IS_RANDOM:
         print("WARNING: JWT_SECRET is not set in .env - everyone is signed out when the server restarts.")
     with SessionLocal() as db:
-        seed_partners(db)                    # add demo partners on first run
         seed_templates(db)                   # and the standard email templates
     threading.Thread(target=auto_followup_loop, name="auto-followups", daemon=True).start()
+    threading.Thread(target=inbox.loop, name="inbox-scan", daemon=True).start()
 
 
 @app.on_event("shutdown")
 def on_shutdown():
     _stop.set()
+    inbox.stop()
 
 
 # Columns added after a table was first created: (table, column, SQL type + default).
@@ -117,6 +122,8 @@ LATER_COLUMNS = [
     ("users", "updated_at", "DATETIME NULL"),
     ("users", "role", "VARCHAR(10) NOT NULL DEFAULT 'user'"),  # existing accounts become "user"
     ("email_dispatches", "template_id", "INT NULL"),
+    ("email_events", "message_id", "VARCHAR(255) NULL"),
+    ("email_events", "reply_id", "INT NULL"),
 ]
 # Columns that are no longer used: (table, column). Removed on startup when present.
 REMOVED_COLUMNS: list[tuple[str, str]] = [
@@ -226,7 +233,7 @@ def user_names(db: Session, usernames) -> dict[str, str]:
     if not wanted:
         return {}
     rows = db.query(models.User.username, models.User.full_name).filter(models.User.username.in_(wanted)).all()
-    return {SYSTEM_USER: "Sent automatically", **{username: full_name or username for username, full_name in rows}}
+    return {SYSTEM_USER: "Sent automatically", inbox.INBOX_USER: "Found in the mailbox", **{username: full_name or username for username, full_name in rows}}
 
 
 def dispatches_to_dicts(db: Session, dispatches: list[models.EmailDispatch]) -> list[dict]:
@@ -1115,7 +1122,7 @@ def get_sent_or_404(db: Session, email_id: int) -> models.EmailDispatch:
 
 def event_to_dict(e: models.EmailEvent, names: dict[str, str]) -> dict:
     return {
-        "id": e.id, "kind": e.kind, "reply_status": e.reply_status, "note": e.note,
+        "id": e.id, "kind": e.kind, "reply_status": e.reply_status, "note": e.note, "reply_id": e.reply_id,
         "subject": e.subject, "body_html": e.body_html,
         "to": [a for a in (e.to_emails or "").split(",") if a],
         "cc": [a for a in (e.cc_emails or "").split(",") if a],
@@ -1314,6 +1321,7 @@ def deliver_followup(db: Session, d: models.EmailDispatch, previous: datetime | 
         raise
 
     d.followup_count += 1
+    event.message_id = result.message_id  # a reply to the follow-up is matched to this email
     for address, reason in result.refused.items():
         record_refused(d, address, reason)
     if result.refused:
@@ -1384,6 +1392,139 @@ def auto_followup_loop():
         _stop.wait(config.AUTO_FOLLOWUP_CHECK_SECONDS)
 
 
+# ---------------------------------------------------------------- partners' replies (read from the mailbox)
+
+
+def unread_filter(user: models.User):
+    """Replies this user has not opened. Replies found before the account existed don't count."""
+    R, Read = models.EmailReply, models.EmailReplyRead
+    opened = select(Read.reply_id).where(Read.reply_id == R.id, Read.user_id == user.id).exists()
+    return and_(~opened, R.found_at >= inbox.utc_to_local(user.created_at))
+
+
+def reply_to_dict(r: models.EmailReply, is_read: bool, full: bool = False) -> dict:
+    d = r.dispatch
+    data = {
+        "id": r.id, "email_id": d.id, "partner_id": d.partner_id, "partner_name": d.partner.name,
+        "mail_type": d.mail_type, "from_email": r.from_email, "from_name": r.from_name,
+        "subject": r.subject, "snippet": r.snippet, "matched_by": r.matched_by,
+        "received_at": r.received_at.isoformat(), "found_at": r.found_at.isoformat(), "is_read": is_read,
+        "attachments": [{"id": a.id, "filename": a.filename, "size": a.size} for a in r.attachments],
+        "original": {"subject": d.subject, "sent_at": d.sent_at.isoformat() if d.sent_at else None,
+                     "upload_id": d.upload_id, "txn_count": d.txn_count, "total_amount": float(d.total_amount),
+                     "reply_status": d.reply_status, "to": [a for a in d.to_emails.split(",") if a]},
+    }
+    if full:
+        data.update(body_html=r.body_html, to=[a for a in r.to_emails.split(",") if a],
+                    cc=[a for a in r.cc_emails.split(",") if a])
+    return data
+
+
+def replies_summary(db: Session, user: models.User) -> dict:
+    R = models.EmailReply
+    return {"unread": db.query(R).filter(unread_filter(user)).count(), "total": db.query(R).count(),
+            "inbox": inbox.status_dict(), "reply_to": config.MAIL_FROM}
+
+
+@api.get("/api/replies/summary")
+def get_replies_summary(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+    """New-reply count for the sidebar badge, and how the mailbox check is doing."""
+    return replies_summary(db, user)
+
+
+@api.get("/api/replies")
+def list_replies(show: Literal["all", "unread"] = "all", q: str = "", partner_id: int | None = None,
+                 db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+    """Partners' replies, newest first. q searches sender, subject, text and partner name."""
+    R, E = models.EmailReply, models.EmailDispatch
+    query = db.query(R).join(E, R.dispatch_id == E.id)
+    unread = unread_filter(user)
+    if show == "unread":
+        query = query.filter(unread)
+    if partner_id:
+        query = query.filter(E.partner_id == partner_id)
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query = query.join(models.Partner, E.partner_id == models.Partner.id).filter(or_(
+            R.from_email.ilike(like), R.from_name.ilike(like), R.subject.ilike(like), R.snippet.ilike(like),
+            models.Partner.name.ilike(like)))
+    replies = query.order_by(R.received_at.desc(), R.id.desc()).limit(500).all()
+    unread_ids = {i for (i,) in db.query(R.id).filter(R.id.in_([r.id for r in replies]), unread)} if replies else set()
+    return [reply_to_dict(r, r.id not in unread_ids) for r in replies]
+
+
+def get_reply_or_404(db: Session, reply_id: int) -> models.EmailReply:
+    r = db.get(models.EmailReply, reply_id)
+    if not r:
+        raise HTTPException(404, "Reply not found.")
+    return r
+
+
+def mark_read(db: Session, user: models.User, reply_ids: list[int]) -> None:
+    Read = models.EmailReplyRead
+    done = {i for (i,) in db.query(Read.reply_id).filter(Read.user_id == user.id, Read.reply_id.in_(reply_ids))} \
+        if reply_ids else set()
+    for reply_id in set(reply_ids) - done:
+        db.add(Read(reply_id=reply_id, user_id=user.id))
+    try:
+        db.commit()
+    except IntegrityError:  # opened in two tabs at once: already marked
+        db.rollback()
+
+
+@api.get("/api/replies/{reply_id}")
+def get_reply(reply_id: int, db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+    """One reply with its text. Opening it marks it as read for this user."""
+    r = get_reply_or_404(db, reply_id)
+    mark_read(db, user, [r.id])
+    return reply_to_dict(r, True, full=True)
+
+
+class ReadIn(BaseModel):
+    read: bool
+
+
+@api.put("/api/replies/{reply_id}/read")
+def set_reply_read(reply_id: int, data: ReadIn, db: Session = Depends(get_db),
+                   user: models.User = Depends(auth.get_current_user)):
+    """Mark one reply as read or as new again (for this user only)."""
+    r = get_reply_or_404(db, reply_id)
+    if data.read:
+        mark_read(db, user, [r.id])
+    else:
+        db.query(models.EmailReplyRead).filter_by(reply_id=r.id, user_id=user.id).delete()
+        db.commit()
+    return replies_summary(db, user)
+
+
+@api.post("/api/replies/read-all")
+def mark_all_replies_read(db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
+    R = models.EmailReply
+    mark_read(db, user, [i for (i,) in db.query(R.id).filter(unread_filter(user))])
+    return replies_summary(db, user)
+
+
+@api.get("/api/replies/{reply_id}/attachments/{attachment_id}")
+def download_reply_attachment(reply_id: int, attachment_id: int, db: Session = Depends(get_db)):
+    a = db.get(models.EmailReplyAttachment, attachment_id)
+    if not a or a.reply_id != reply_id:
+        raise HTTPException(404, "Attachment not found.")
+    # always downloaded as a file (never opened in the app's own page), whatever the partner sent
+    fallback = re.sub(r"[^A-Za-z0-9._ -]", "_", a.filename) or "attachment"
+    return Response(a.content, media_type="application/octet-stream", headers={
+        "Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(a.filename)}"})
+
+
+@api.post("/api/replies/check-now")
+def check_inbox_now(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_admin)):
+    """Read the mailbox now instead of waiting for the next automatic check."""
+    try:
+        result = inbox.scan()
+    except Exception as exc:
+        raise HTTPException(502, f"The mailbox could not be checked: {exc}")
+    return {"result": result, "summary": replies_summary(db, admin)}
+
+
 # ---------------------------------------------------------------- email configuration
 
 EMAIL_RE = r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+"
@@ -1394,7 +1535,6 @@ class EmailSettingsIn(BaseModel):
     auto_followup_enabled: bool
     auto_followup_max: int
     cc_emails: list[str]
-    reply_to: str = ""
 
     @field_validator("followup_due_days")
     @classmethod
@@ -1426,14 +1566,6 @@ class EmailSettingsIn(BaseModel):
             raise ValueError("At most 20 CC addresses")
         return cleaned
 
-    @field_validator("reply_to")
-    @classmethod
-    def check_reply_to(cls, value: str) -> str:
-        value = value.strip().lower()
-        if value and not re.fullmatch(EMAIL_RE, value):
-            raise ValueError(f"'{value}' is not a valid email address")
-        return value
-
 
 def email_settings_dict(db: Session) -> dict:
     values = settings.current(db)
@@ -1449,8 +1581,10 @@ def email_settings_dict(db: Session) -> dict:
         "auto_eligible_now": len(auto_candidates(db, values["auto_followup_max"])),
         "check_every_seconds": config.AUTO_FOLLOWUP_CHECK_SECONDS,
         "auto_status": auto_status,
+        "inbox": inbox.status_dict(),
         "smtp": {"host": config.SMTP_HOST, "port": config.SMTP_PORT, "use_tls": config.SMTP_USE_TLS,
-                 "user": config.SMTP_USER, "mail_from": config.MAIL_FROM, "max_attempts": config.SMTP_MAX_ATTEMPTS},
+                 "user": config.SMTP_USER, "mail_from": config.MAIL_FROM,
+                 "max_attempts": config.SMTP_MAX_ATTEMPTS},
     }
 
 

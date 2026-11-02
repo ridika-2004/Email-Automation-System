@@ -2,9 +2,9 @@
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint,
+    BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint,
 )
-from sqlalchemy.dialects.mysql import LONGBLOB
+from sqlalchemy.dialects.mysql import LONGBLOB, MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -297,8 +297,68 @@ class EmailEvent(Base):
     cc_emails: Mapped[str | None] = mapped_column(Text, nullable=True)
     ok: Mapped[bool] = mapped_column(Boolean, default=True)  # follow-up delivered to the mail server
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # kind "followup": its Message-ID, so a reply to the follow-up is matched to this email
+    message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # kind "reply": the partner's reply (email_replies)
+    reply_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_by: Mapped[str] = mapped_column(String(30))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class EmailReply(Base):
+    """A partner's reply to one of our emails (or follow-ups), read from the sending mailbox (inbox.py).
+    Only replies to our emails are stored: other mail in the mailbox is never downloaded."""
+    __tablename__ = "email_replies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dispatch_id: Mapped[int] = mapped_column(ForeignKey("email_dispatches.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[str] = mapped_column(String(255), unique=True)   # the reply's own Message-ID
+    from_email: Mapped[str] = mapped_column(String(254))
+    from_name: Mapped[str] = mapped_column(String(200), default="")
+    to_emails: Mapped[str] = mapped_column(Text)                        # comma separated
+    cc_emails: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(String(500))
+    body_html: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"))
+    snippet: Mapped[str] = mapped_column(String(300), default="")       # start of the text, for the list
+    matched_by: Mapped[str] = mapped_column(String(20))                 # thread (reply headers) / subject
+    received_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    found_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    dispatch: Mapped[EmailDispatch] = relationship()
+    attachments: Mapped[list["EmailReplyAttachment"]] = relationship(
+        cascade="all, delete-orphan", order_by="EmailReplyAttachment.id")
+
+
+class EmailReplyAttachment(Base):
+    """A file attached to a partner's reply."""
+    __tablename__ = "email_reply_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reply_id: Mapped[int] = mapped_column(ForeignKey("email_replies.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes] = mapped_column(LargeBinary().with_variant(LONGBLOB(), "mysql"), deferred=True)
+
+
+class EmailReplyRead(Base):
+    """Replies a user has opened. The others count as new (the notification count), except replies
+    found before the user's account was created."""
+    __tablename__ = "email_reply_reads"
+
+    reply_id: Mapped[int] = mapped_column(ForeignKey("email_replies.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class InboxState(Base):
+    """How far the mailbox has been read, so each check only looks at new messages (IMAP UIDs)."""
+    __tablename__ = "inbox_state"
+
+    mailbox: Mapped[str] = mapped_column(String(255), primary_key=True)  # user@host/folder
+    uidvalidity: Mapped[int] = mapped_column(BigInteger)                  # changes when the folder is rebuilt
+    last_uid: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class AppSetting(Base):

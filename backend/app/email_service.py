@@ -228,16 +228,14 @@ def send_email(to: list[str], cc: list[str], subject: str, html_body: str, in_re
     email, so this one shows in the same conversation (follow-ups). attachments: (file name, .xlsx bytes).
 
     Retries on temporary errors (e.g. server down); raises RecipientsRefused when every
-    recipient is refused and RuntimeError on any other final failure.
+    recipient is refused, and RuntimeError on any other final failure.
     """
     msg = EmailMessage()
     msg["From"] = config.MAIL_FROM
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)
-    reply_to = settings.get("reply_to")
-    if reply_to:
-        msg["Reply-To"] = reply_to
+    msg["Reply-To"] = config.MAIL_FROM  # replies come back to the mailbox they are read from (inbox.py)
     msg["Subject"] = subject
     msg["Message-ID"] = make_msgid(domain=config.MAIL_FROM.rsplit("@", 1)[-1])
     if in_reply_to:
