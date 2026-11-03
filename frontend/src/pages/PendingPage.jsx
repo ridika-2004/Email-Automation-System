@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { api, formatAmount, formatDateTime } from "../api";
+import EmailActivity from "../components/EmailActivity";
 import MailTypeBadge from "../components/MailTypeBadge";
 import Modal from "../components/Modal";
 import { EmailPreview, StatusBadge } from "./EmailsPage";
@@ -137,6 +138,7 @@ export default function PendingPage({ config, isAdmin }) {
                   {openId === e.id && (
                     <tr>
                       <td colSpan={columns} className={expandedCell}>
+                        <EmailActivity email={e} isAdmin={isAdmin} />
                         <EmailPreview
                           email={e}
                           config={config}

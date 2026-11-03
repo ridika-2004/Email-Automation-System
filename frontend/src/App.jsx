@@ -13,6 +13,7 @@ import EmailConfigPage from "./pages/EmailConfigPage";
 import TemplatesPage from "./pages/TemplatesPage";
 import AdminHomePage from "./pages/AdminHomePage";
 import RepliesPage from "./pages/RepliesPage";
+import SystemSettingsPage from "./pages/SystemSettingsPage";
 import Sidebar, { Icon, useSidebarPin } from "./components/Sidebar";
 import { cx } from "./components/ui";
 
@@ -24,10 +25,11 @@ const PAGES = {
   emails: { title: "Email Preview & Send", subtitle: "Check and edit each partner's email, then send them for approval" },
   pending: { title: "Pending Mails", subtitle: "Emails waiting for an admin to send them" },
   sent: { title: "Sent Mails", subtitle: "Emails sent to partners, their replies and follow-ups" },
-  replies: { title: "Partner Replies", subtitle: "Partners' replies to our emails, read from the sending mailbox" },
+  replies: { title: "Partner Replies", subtitle: "Replies to our emails and other mail from partners, read from the sending mailbox" },
   partners: { title: "Partner Configuration", subtitle: "Partners and the addresses their emails go to" },
   templates: { title: "Email Templates", subtitle: "Your templates for each case: pick one for each partner's email" },
   emailConfig: { title: "Email Configuration", subtitle: "Follow-up timing, automatic follow-ups, recipients and the mail server" },
+  systemSettings: { title: "System Settings", subtitle: "Mail server, inbox, retries, background jobs and security: applied at once" },
   account: { title: "My Profile", subtitle: "Your details, password, devices and sign-in activity" },
   users: { title: "Users & Security", subtitle: "Accounts, roles and the security log" },
 };
@@ -162,6 +164,7 @@ function MainApp({ user, onUserChange, onSignOut }) {
         // users write the emails, so the templates are theirs
         ...(isAdmin ? [] : [{ id: "templates", label: "Email Templates", icon: "template" }]),
         { id: "emailConfig", label: "Email Configuration", icon: "sliders" },
+        ...(isAdmin ? [{ id: "systemSettings", label: "System Settings", icon: "server" }] : []),
       ],
     },
     {
@@ -220,10 +223,13 @@ function MainApp({ user, onUserChange, onSignOut }) {
           )}
           {tab === "pending" && <PendingPage config={config} isAdmin={isAdmin} />}
           {tab === "sent" && <SentPage config={config} isAdmin={isAdmin} />}
-          {tab === "replies" && <RepliesPage summary={replies} onChange={updateReplies} isAdmin={isAdmin} />}
+          {tab === "replies" && (
+            <RepliesPage summary={replies} onChange={updateReplies} isAdmin={isAdmin} onOpenSettings={() => open("systemSettings")} />
+          )}
           {tab === "partners" && <PartnersPage isAdmin={isAdmin} />}
           {tab === "templates" && !isAdmin && <TemplatesPage />}
-          {tab === "emailConfig" && <EmailConfigPage isAdmin={isAdmin} onSaved={loadConfig} />}
+          {tab === "emailConfig" && <EmailConfigPage isAdmin={isAdmin} onSaved={loadConfig} onOpenSettings={() => open("systemSettings")} />}
+          {tab === "systemSettings" && isAdmin && <SystemSettingsPage onSaved={loadConfig} />}
           {tab === "account" && <AccountPage user={user} onUserChange={onUserChange} onSignedOut={onSignOut} />}
           {tab === "users" && isAdmin && <UsersPage currentUser={user} />}
         </main>
@@ -243,7 +249,7 @@ function ReplyNotice({ count, onOpen, onClose }) {
     <div role="status" className="fixed bottom-4 right-4 z-50 flex max-w-[calc(100vw-32px)] items-center gap-3 rounded-lg border border-line bg-white px-4 py-3 shadow-modal">
       <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand" aria-hidden="true" />
       <span className="text-sm">
-        <b>{count} new {count === 1 ? "reply" : "replies"}</b> from partners
+        <b>{count} new {count === 1 ? "message" : "messages"}</b> from partners
       </span>
       {onOpen && <button className="text-sm font-semibold text-brand hover:underline" onClick={onOpen}>Open</button>}
       <button className="rounded p-1 text-muted hover:bg-gray-100" onClick={onClose} aria-label="Dismiss">✕</button>

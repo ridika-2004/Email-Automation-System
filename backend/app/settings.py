@@ -54,7 +54,7 @@ def get(name: str):
 
 
 def last_change(db: Session) -> dict | None:
-    row = db.query(models.AppSetting).order_by(models.AppSetting.updated_at.desc()).first()
+    row = db.query(models.AppSetting).filter(models.AppSetting.key.in_(DEFAULTS))         .order_by(models.AppSetting.updated_at.desc()).first()
     return {"by": row.updated_by, "at": row.updated_at.isoformat()} if row else None
 
 

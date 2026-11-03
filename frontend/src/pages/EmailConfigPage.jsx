@@ -17,7 +17,7 @@ const pick = (s) => Object.fromEntries(FIELDS.map((k) => [k, s[k]]));
 
 // Email settings: when a follow-up is due, automatic follow-ups, CC and the mail server.
 // Everyone can see them; only admins can change them.
-export default function EmailConfigPage({ isAdmin, onSaved }) {
+export default function EmailConfigPage({ isAdmin, onSaved, onOpenSettings }) {
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState(null);
   const [message, setMessage] = useState(null); // { type, text }
@@ -149,7 +149,7 @@ export default function EmailConfigPage({ isAdmin, onSaved }) {
         </div>
       </section>
 
-      <MailServerCard smtp={settings.smtp} isAdmin={isAdmin} />
+      <MailServerCard smtp={settings.smtp} isAdmin={isAdmin} onOpenSettings={onOpenSettings} />
 
       {isAdmin && (
         <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-white/95 px-4 py-3 shadow-card backdrop-blur">
@@ -177,7 +177,7 @@ function describeRun(r) {
 }
 
 // Mail server details come from the server's .env file; admins can send a test email
-function MailServerCard({ smtp, isAdmin }) {
+function MailServerCard({ smtp, isAdmin, onOpenSettings }) {
   const [to, setTo] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
@@ -201,12 +201,20 @@ function MailServerCard({ smtp, isAdmin }) {
     ["Sign-in", !smtp.user ? "None" : `${smtp.user} (password)`],
     ["Sender (From)", smtp.mail_from],
     ["Attempts per email", smtp.max_attempts],
+    ["Wait between attempts", `${smtp.retry_seconds} seconds`],
   ];
 
   return (
     <section className={card}>
-      <h2 className={h2}>Mail server</h2>
-      <p className="mb-3 text-muted">Set in the server's <code>backend/.env</code> file (SMTP_*). Restart the backend after changing it.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className={h2}>Mail server</h2>
+        {isAdmin && onOpenSettings && (
+          <button type="button" className={btnCls("default", "sm")} onClick={onOpenSettings}>Change in System Settings</button>
+        )}
+      </div>
+      <p className="mb-3 text-muted">
+        {isAdmin ? "Admins change it on the System Settings page; changes apply at once." : "Admins change it; changes apply at once."}
+      </p>
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1.5 text-[13px]">
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
@@ -232,7 +240,7 @@ function MailServerCard({ smtp, isAdmin }) {
   );
 }
 
-function Toggle({ id, checked, onChange, disabled }) {
+export function Toggle({ id, checked, onChange, disabled }) {
   return (
     <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer">
       <input id={id} type="checkbox" role="switch" className="peer sr-only" checked={checked} onChange={onChange} disabled={disabled} />

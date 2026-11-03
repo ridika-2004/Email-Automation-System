@@ -11,7 +11,9 @@ Flow:
   8. Follow-up of sent emails: reply status, follow-up emails, notes, history           (admins change, everyone reads)
   9. GET/PUT /api/email-settings           -> follow-up days, automatic follow-ups, CC (admins change)
  10. /api/email-templates                  -> email templates per mail type (users change, everyone reads)
- 11. /api/replies                          -> partners' replies, read from the sending mailbox (everyone reads)
+ 11. /api/replies                          -> partners' mail, read from the sending mailbox: replies to our
+                                              emails and other partner mail (everyone reads)
+ 12. /api/server-settings                  -> mail server, inbox, retries and security settings (admins only)
 
 Automatic follow-ups: when switched on, a background thread sends the follow-up of every email
 that is due (see run_auto_followups), as the "system" user.
@@ -27,22 +29,23 @@ import re
 import threading
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from sqlalchemy import and_, func, inspect, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
-from . import auth, config, inbox, models, settings, users
+from . import auth, config, inbox, models, server_settings, settings, users
 from .database import Base, SessionLocal, create_database_if_missing, engine, get_db
+from .delivery import issues_of, record_refused
 from .email_check import validate_real_email
 from .email_service import (
     MAIL_TYPE_NAMES, MAIL_TYPES, PLACEHOLDERS, RecipientsRefused, attachment_name, build_email, build_followup,
-    send_email, transactions_xlsx, unknown_placeholders,
+    send_email, test_smtp, transactions_xlsx, unknown_placeholders,
 )
 from .excel_parser import FileValidationError, build_template, parse_transactions, split_rows, to_xlsx
 from .seed import seed_templates
@@ -70,6 +73,7 @@ def on_startup():
         print("WARNING: JWT_SECRET is not set in .env - everyone is signed out when the server restarts.")
     with SessionLocal() as db:
         seed_templates(db)                   # and the standard email templates
+        server_settings.load(db)             # settings changed on the System Settings page
     threading.Thread(target=auto_followup_loop, name="auto-followups", daemon=True).start()
     threading.Thread(target=inbox.loop, name="inbox-scan", daemon=True).start()
 
@@ -77,6 +81,7 @@ def on_startup():
 @app.on_event("shutdown")
 def on_shutdown():
     _stop.set()
+    _wake_followups.set()
     inbox.stop()
 
 
@@ -124,6 +129,12 @@ LATER_COLUMNS = [
     ("email_dispatches", "template_id", "INT NULL"),
     ("email_events", "message_id", "VARCHAR(255) NULL"),
     ("email_events", "reply_id", "INT NULL"),
+    ("email_replies", "partner_id", "INT NULL"),
+    ("email_replies", "kind", "VARCHAR(20) NOT NULL DEFAULT 'reply'"),
+]
+# Columns that may be empty now: (table, column, SQL type). MySQL only.
+NULLABLE_COLUMNS = [
+    ("email_replies", "dispatch_id", "INT NULL"),  # other partner mail belongs to no email
 ]
 # Columns that are no longer used: (table, column). Removed on startup when present.
 REMOVED_COLUMNS: list[tuple[str, str]] = [
@@ -158,6 +169,22 @@ def add_missing_columns():
     drop_removed_columns()
     upgrade_dispatch_unique_key()
     widen_columns()
+    make_nullable()
+    with engine.begin() as conn:  # replies stored before partner_id existed
+        conn.execute(text("UPDATE email_replies SET partner_id = (SELECT partner_id FROM email_dispatches "
+                          "WHERE email_dispatches.id = email_replies.dispatch_id) "
+                          "WHERE partner_id IS NULL AND dispatch_id IS NOT NULL"))
+
+
+def make_nullable():
+    if engine.dialect.name != "mysql":
+        return
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, column, ddl in NULLABLE_COLUMNS:
+            current = next((c for c in inspector.get_columns(table) if c["name"] == column), None)
+            if current is not None and not current["nullable"]:
+                conn.execute(text(f"ALTER TABLE {table} MODIFY {column} {ddl}"))
 
 
 def drop_removed_columns():
@@ -287,24 +314,6 @@ def followup_due(d: models.EmailDispatch) -> bool:
     last_contact = d.last_followup_at or d.sent_at
     return (d.status == "SENT" and d.reply_status == "not_received" and last_contact is not None
             and last_contact < datetime.now() - timedelta(days=settings.get("followup_due_days")))
-
-
-def issues_of(dispatch: models.EmailDispatch) -> list[dict]:
-    return json.loads(dispatch.delivery_issues) if dispatch.delivery_issues else []
-
-
-def record_refused(dispatch: models.EmailDispatch, address: str, reason: str) -> None:
-    """The mail server refused this recipient: note it on the email, and flag the partner's
-    address so it is left out of new emails until someone fixes or clears it."""
-    address = address.strip().lower()
-    now = datetime.now()
-    issues = [i for i in issues_of(dispatch) if i["email"] != address]
-    issues.append({"email": address, "reason": reason, "at": now.isoformat(timespec="seconds")})
-    dispatch.delivery_issues = json.dumps(issues)
-    for partner_email in dispatch.partner.emails:
-        if partner_email.email.strip().lower() == address:
-            partner_email.problem = f"Refused: {reason}"[:255]
-            partner_email.problem_at = now
 
 
 MAIL_TYPE_ORDER = list(MAIL_TYPES)
@@ -931,6 +940,8 @@ def submit_emails(upload_id: int, db: Session = Depends(get_db), user: models.Us
         d.status = "PENDING"
         d.submitted_by = user.username
         d.submitted_at = now
+        db.add(models.EmailEvent(dispatch_id=d.id, kind="submitted", subject=d.subject, created_by=user.username,
+                                 created_at=now))
     db.commit()
     return {"submitted": len(drafts), "emails": list_emails(upload_id, db)}
 
@@ -989,6 +1000,11 @@ def deliver(db: Session, d: models.EmailDispatch, admin: models.User) -> None:
         d.message_id = result.message_id
         for address, reason in result.refused.items():  # some recipients refused: record, don't hide
             record_refused(d, address, reason)
+        note = f"Accepted by the mail server (attempt {result.attempts})."
+        db.add(models.EmailEvent(
+            dispatch_id=d.id, kind="sent", subject=d.subject, to_emails=d.to_emails, cc_emails=d.cc_emails,
+            note=note, message_id=result.message_id, created_by=admin.username, created_at=d.sent_at,
+            error=("Refused: " + "; ".join(f"{a} ({r})" for a, r in result.refused.items())) if result.refused else None))
     except RecipientsRefused as exc:
         d.status = "FAILED"
         d.error = str(exc)
@@ -999,6 +1015,9 @@ def deliver(db: Session, d: models.EmailDispatch, admin: models.User) -> None:
         d.status = "FAILED"
         d.error = str(exc)
         d.attempts += config.SMTP_MAX_ATTEMPTS
+    if d.status == "FAILED":
+        db.add(models.EmailEvent(dispatch_id=d.id, kind="send_failed", subject=d.subject, to_emails=d.to_emails,
+                                 cc_emails=d.cc_emails, ok=False, error=(d.error or "")[:1000], created_by=admin.username))
     d.sending_since = None
     db.commit()
 
@@ -1120,9 +1139,15 @@ def get_sent_or_404(db: Session, email_id: int) -> models.EmailDispatch:
     return d
 
 
+INCOMING_KINDS = {inbox.REPLY, inbox.AUTO_REPLY, inbox.BOUNCE}
+
+
 def event_to_dict(e: models.EmailEvent, names: dict[str, str]) -> dict:
+    note = e.note
+    if e.kind == inbox.REPLY and note and not note.startswith("Reply from"):  # stored before the wording changed
+        note = f"Reply from {note}"
     return {
-        "id": e.id, "kind": e.kind, "reply_status": e.reply_status, "note": e.note, "reply_id": e.reply_id,
+        "id": e.id, "kind": e.kind, "reply_status": e.reply_status, "note": note, "reply_id": e.reply_id,
         "subject": e.subject, "body_html": e.body_html,
         "to": [a for a in (e.to_emails or "").split(",") if a],
         "cc": [a for a in (e.cc_emails or "").split(",") if a],
@@ -1134,12 +1159,29 @@ def event_to_dict(e: models.EmailEvent, names: dict[str, str]) -> dict:
 
 @api.get("/api/emails/{email_id}/events")
 def list_email_events(email_id: int, db: Session = Depends(get_db)):
-    """Follow-up history of a sent email, newest first."""
-    get_sent_or_404(db, email_id)
+    """History of an email, oldest first: sent for approval, sent (or failed), follow-ups, partners'
+    replies, status changes, notes and remarks. Emails from before these steps were recorded get them
+    from the email itself."""
+    d = db.get(models.EmailDispatch, email_id)
+    if not d:
+        raise HTTPException(404, "Email not found.")
     events = db.query(models.EmailEvent).filter_by(dispatch_id=email_id) \
-        .order_by(models.EmailEvent.created_at.desc(), models.EmailEvent.id.desc()).all()
-    names = user_names(db, [e.created_by for e in events])
-    return [event_to_dict(e, names) for e in events]
+        .order_by(models.EmailEvent.created_at, models.EmailEvent.id).all()
+    names = user_names(db, [e.created_by for e in events] + [d.submitted_by, d.sent_by])
+    items = [event_to_dict(e, names) for e in events]
+    kinds = {e.kind for e in events}
+    base = {"reply_status": None, "note": None, "reply_id": None, "body_html": None, "ok": True, "error": None,
+            "subject": d.subject, "to": [], "cc": []}
+    if "submitted" not in kinds and d.submitted_at:
+        items.append({**base, "id": f"submitted-{d.id}", "kind": "submitted", "created_by": d.submitted_by,
+                      "created_by_name": names.get(d.submitted_by, d.submitted_by), "created_at": d.submitted_at.isoformat()})
+    if "sent" not in kinds and d.sent_at:
+        items.append({**base, "id": f"sent-{d.id}", "kind": "sent", "created_by": d.sent_by,
+                      "created_by_name": names.get(d.sent_by, d.sent_by), "created_at": d.sent_at.isoformat(),
+                      "to": [a for a in d.to_emails.split(",") if a], "cc": [a for a in d.cc_emails.split(",") if a]})
+    order = {"submitted": 0, "sent": 1, "send_failed": 1}  # same second: approval before sending
+    items.sort(key=lambda i: (i["created_at"], order.get(i["kind"], 2)))
+    return items
 
 
 class ReplyStatusIn(BaseModel):
@@ -1336,6 +1378,7 @@ def deliver_followup(db: Session, d: models.EmailDispatch, previous: datetime | 
 AUTO_RETRY_AFTER = timedelta(hours=1)  # an automatic follow-up that failed is tried again after this long
 log = logging.getLogger("uvicorn.error")
 _stop = threading.Event()
+_wake_followups = threading.Event()   # System Settings changed the check interval: start again with it
 _run_lock = threading.Lock()           # one run at a time ("Run now" while the timer runs)
 _failed_at: dict[int, datetime] = {}   # email id -> when its automatic follow-up last failed
 auto_status = {"last_run_at": None, "last_result": None, "next_run_at": None}
@@ -1389,7 +1432,8 @@ def auto_followup_loop():
             log.exception("Automatic follow-ups failed")
         next_run = datetime.now() + timedelta(seconds=config.AUTO_FOLLOWUP_CHECK_SECONDS)
         auto_status["next_run_at"] = next_run.isoformat(timespec="seconds")
-        _stop.wait(config.AUTO_FOLLOWUP_CHECK_SECONDS)
+        _wake_followups.wait(config.AUTO_FOLLOWUP_CHECK_SECONDS)
+        _wake_followups.clear()
 
 
 # ---------------------------------------------------------------- partners' replies (read from the mailbox)
@@ -1402,17 +1446,24 @@ def unread_filter(user: models.User):
     return and_(~opened, R.found_at >= inbox.utc_to_local(user.created_at))
 
 
-def reply_to_dict(r: models.EmailReply, is_read: bool, full: bool = False) -> dict:
+def partner_names(db: Session) -> dict[int, str]:
+    return {i: n for i, n in db.query(models.Partner.id, models.Partner.name)}
+
+
+def reply_to_dict(r: models.EmailReply, is_read: bool, partners: dict[int, str], full: bool = False) -> dict:
+    """A partner message. category "reply": it answers one of our emails (original); "partner_mail": other mail."""
     d = r.dispatch
+    partner_id = d.partner_id if d else r.partner_id
     data = {
-        "id": r.id, "email_id": d.id, "partner_id": d.partner_id, "partner_name": d.partner.name,
-        "mail_type": d.mail_type, "from_email": r.from_email, "from_name": r.from_name,
+        "id": r.id, "category": "reply" if d else "partner_mail", "kind": r.kind,
+        "email_id": d.id if d else None, "partner_id": partner_id, "partner_name": partners.get(partner_id, "Unknown partner"),
+        "mail_type": d.mail_type if d else None, "from_email": r.from_email, "from_name": r.from_name,
         "subject": r.subject, "snippet": r.snippet, "matched_by": r.matched_by,
         "received_at": r.received_at.isoformat(), "found_at": r.found_at.isoformat(), "is_read": is_read,
         "attachments": [{"id": a.id, "filename": a.filename, "size": a.size} for a in r.attachments],
         "original": {"subject": d.subject, "sent_at": d.sent_at.isoformat() if d.sent_at else None,
                      "upload_id": d.upload_id, "txn_count": d.txn_count, "total_amount": float(d.total_amount),
-                     "reply_status": d.reply_status, "to": [a for a in d.to_emails.split(",") if a]},
+                     "reply_status": d.reply_status, "to": [a for a in d.to_emails.split(",") if a]} if d else None,
     }
     if full:
         data.update(body_html=r.body_html, to=[a for a in r.to_emails.split(",") if a],
@@ -1421,8 +1472,15 @@ def reply_to_dict(r: models.EmailReply, is_read: bool, full: bool = False) -> di
 
 
 def replies_summary(db: Session, user: models.User) -> dict:
+    """New (unopened) and total messages, for replies to our emails and for other partner mail."""
     R = models.EmailReply
-    return {"unread": db.query(R).filter(unread_filter(user)).count(), "total": db.query(R).count(),
+    unread = unread_filter(user)
+    counts = {}
+    for name, condition in (("replies", R.dispatch_id.isnot(None)), ("partner_mail", R.dispatch_id.is_(None))):
+        counts[f"unread_{name}"] = db.query(R).filter(condition, unread).count()
+        counts[f"total_{name}"] = db.query(R).filter(condition).count()
+    return {**counts, "unread": counts["unread_replies"] + counts["unread_partner_mail"],
+            "total": counts["total_replies"] + counts["total_partner_mail"],
             "inbox": inbox.status_dict(), "reply_to": config.MAIL_FROM}
 
 
@@ -1433,30 +1491,33 @@ def get_replies_summary(db: Session = Depends(get_db), user: models.User = Depen
 
 
 @api.get("/api/replies")
-def list_replies(show: Literal["all", "unread"] = "all", q: str = "", partner_id: int | None = None,
+def list_replies(category: Literal["replies", "partner_mail"] = "replies", show: Literal["all", "unread"] = "all",
+                 q: str = "", partner_id: int | None = None,
                  db: Session = Depends(get_db), user: models.User = Depends(auth.get_current_user)):
-    """Partners' replies, newest first. q searches sender, subject, text and partner name."""
-    R, E = models.EmailReply, models.EmailDispatch
-    query = db.query(R).join(E, R.dispatch_id == E.id)
+    """Partner messages, newest first: replies to our emails, or other mail from partners.
+    q searches sender, subject, text and partner name."""
+    R = models.EmailReply
+    query = db.query(R).filter(R.dispatch_id.isnot(None) if category == "replies" else R.dispatch_id.is_(None))
     unread = unread_filter(user)
     if show == "unread":
         query = query.filter(unread)
     if partner_id:
-        query = query.filter(E.partner_id == partner_id)
+        query = query.filter(R.partner_id == partner_id)
     if q.strip():
         like = f"%{q.strip()}%"
-        query = query.join(models.Partner, E.partner_id == models.Partner.id).filter(or_(
+        query = query.outerjoin(models.Partner, R.partner_id == models.Partner.id).filter(or_(
             R.from_email.ilike(like), R.from_name.ilike(like), R.subject.ilike(like), R.snippet.ilike(like),
             models.Partner.name.ilike(like)))
     replies = query.order_by(R.received_at.desc(), R.id.desc()).limit(500).all()
     unread_ids = {i for (i,) in db.query(R.id).filter(R.id.in_([r.id for r in replies]), unread)} if replies else set()
-    return [reply_to_dict(r, r.id not in unread_ids) for r in replies]
+    partners = partner_names(db)
+    return [reply_to_dict(r, r.id not in unread_ids, partners) for r in replies]
 
 
 def get_reply_or_404(db: Session, reply_id: int) -> models.EmailReply:
     r = db.get(models.EmailReply, reply_id)
     if not r:
-        raise HTTPException(404, "Reply not found.")
+        raise HTTPException(404, "Message not found.")
     return r
 
 
@@ -1477,7 +1538,7 @@ def get_reply(reply_id: int, db: Session = Depends(get_db), user: models.User = 
     """One reply with its text. Opening it marks it as read for this user."""
     r = get_reply_or_404(db, reply_id)
     mark_read(db, user, [r.id])
-    return reply_to_dict(r, True, full=True)
+    return reply_to_dict(r, True, partner_names(db), full=True)
 
 
 class ReadIn(BaseModel):
@@ -1523,6 +1584,100 @@ def check_inbox_now(db: Session = Depends(get_db), admin: models.User = Depends(
     except Exception as exc:
         raise HTTPException(502, f"The mailbox could not be checked: {exc}")
     return {"result": result, "summary": replies_summary(db, admin)}
+
+
+# ---------------------------------------------------------------- System Settings (admins only)
+
+
+class ServerSettingsIn(BaseModel):
+    values: dict[str, Any] = {}   # only the settings that changed
+    reset: list[str] = []         # back to the .env value
+    force: bool = False           # save even when the connection test fails
+
+
+class ServerSettingsTestIn(BaseModel):
+    target: Literal["smtp", "imap"]
+    values: dict[str, Any] = {}   # unsaved values to test with; the others are the ones in effect
+
+
+def server_settings_dict(db: Session) -> dict:
+    return server_settings.to_dict(db, user_names(db, server_settings.usernames(db)))
+
+
+def connection_problem(target: str, v: dict) -> str | None:
+    """None when the mail server (smtp) or mailbox (imap) accepts these settings, else the reason."""
+    try:
+        if target == "smtp":
+            test_smtp(v["SMTP_HOST"], v["SMTP_PORT"], v["SMTP_USE_TLS"], v["SMTP_USER"], v["SMTP_PASSWORD"])
+        else:
+            m = server_settings.imap_values(v)
+            inbox.test_connection(m["host"], m["port"], m["user"], m["password"], m["folder"])
+    except Exception as exc:
+        return str(exc)
+    return None
+
+
+def parse_or_400(values: dict, reset: list[str]) -> tuple[dict, set[str]]:
+    try:
+        return server_settings.parse_changes(values, reset)
+    except server_settings.SettingsError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@api.get("/api/server-settings")
+def get_server_settings(db: Session = Depends(get_db), _: models.User = Depends(auth.require_admin)):
+    return server_settings_dict(db)
+
+
+@api.put("/api/server-settings")
+def update_server_settings(data: ServerSettingsIn, request: Request, db: Session = Depends(get_db),
+                           admin: models.User = Depends(auth.require_admin)):
+    """Save settings; they apply at once. A change to the mail server or the mailbox is tested first:
+    if the test fails nothing is saved (409), unless force is set."""
+    changes, resets = parse_or_400(data.values, data.reset)
+    if not changes and not resets:
+        return {**server_settings_dict(db), "changed": []}
+    old, new = server_settings.effective(), server_settings.effective(changes, resets)
+    if not data.force:
+        problems = []
+        if any(old[k] != new[k] for k in server_settings.SMTP_FIELDS):
+            problem = connection_problem("smtp", new)
+            if problem:
+                problems.append(f"Mail server: {problem}")
+        imap_changed = server_settings.imap_values(old) != server_settings.imap_values(new) or \
+            (new["INBOX_ENABLED"] and not old["INBOX_ENABLED"])
+        if new["INBOX_ENABLED"] and imap_changed:
+            m = server_settings.imap_values(new)
+            problem = connection_problem("imap", new) if (m["host"] and m["user"] and m["password"]) else \
+                "the mailbox needs a server, a user and a password."
+            if problem:
+                problems.append(f"Inbox: {problem}")
+        if problems:
+            raise HTTPException(409, {"code": "test_failed", "problems": problems,
+                                      "message": "Not saved: " + " ".join(problems)})
+    changed = server_settings.save(db, changes, resets, admin.username)
+    if changed:
+        auth.log_event(db, request, "settings_changed", user=admin, detail="System Settings: " + ", ".join(changed))
+        db.commit()
+        inbox.wake()            # check the mailbox with the new settings now
+        _wake_followups.set()   # and restart the follow-up timer with its new interval
+    return {**server_settings_dict(db), "changed": changed}
+
+
+@api.post("/api/server-settings/test")
+def test_server_settings(data: ServerSettingsTestIn, db: Session = Depends(get_db),
+                         _: models.User = Depends(auth.require_admin)):
+    """Try the mail server or the mailbox with these (unsaved) settings. Nothing is sent or saved."""
+    changes, _resets = parse_or_400(data.values, [])
+    values = server_settings.effective(changes)
+    problem = connection_problem(data.target, values)
+    if problem:
+        raise HTTPException(502, problem)
+    if data.target == "smtp":
+        return {"ok": True, "message": f"Signed in to {values['SMTP_HOST']}:{values['SMTP_PORT']}"
+                                       f"{' as ' + values['SMTP_USER'] if values['SMTP_USER'] else ''}. Nothing was sent."}
+    m = server_settings.imap_values(values)
+    return {"ok": True, "message": f"Opened {m['folder']} of {m['user']} on {m['host']} (read-only)."}
 
 
 # ---------------------------------------------------------------- email configuration
@@ -1584,7 +1739,7 @@ def email_settings_dict(db: Session) -> dict:
         "inbox": inbox.status_dict(),
         "smtp": {"host": config.SMTP_HOST, "port": config.SMTP_PORT, "use_tls": config.SMTP_USE_TLS,
                  "user": config.SMTP_USER, "mail_from": config.MAIL_FROM,
-                 "max_attempts": config.SMTP_MAX_ATTEMPTS},
+                 "max_attempts": config.SMTP_MAX_ATTEMPTS, "retry_seconds": config.SMTP_RETRY_SECONDS},
     }
 
 
