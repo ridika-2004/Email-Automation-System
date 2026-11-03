@@ -169,7 +169,7 @@ def user_to_dict(user: models.User) -> dict:
 class RateLimiter:
     """At most `limit` requests per `window` seconds for one key (in memory, per server process)."""
 
-    def __init__(self, limit: int, window: int = 60):
+    def __init__(self, limit, window: int = 60):  # limit: a number, or a function returning it
         self.limit, self.window = limit, window
         self.hits: dict[str, deque] = defaultdict(deque)
         self.lock = threading.Lock()
@@ -180,14 +180,14 @@ class RateLimiter:
             hits = self.hits[key]
             while hits and hits[0] <= now - self.window:
                 hits.popleft()
-            if len(hits) >= self.limit:
+            if len(hits) >= (self.limit() if callable(self.limit) else self.limit):
                 retry = int(self.window - (now - hits[0])) + 1
                 raise HTTPException(429, f"Too many attempts. Please wait {retry} seconds and try again.",
                                     headers={"Retry-After": str(retry)})
             hits.append(now)
 
 
-login_limiter = RateLimiter(config.LOGIN_RATE_LIMIT_PER_MINUTE)
+login_limiter = RateLimiter(lambda: config.LOGIN_RATE_LIMIT_PER_MINUTE)  # System Settings can change it
 register_limiter = RateLimiter(5)
 forgot_limiter = RateLimiter(5)
 verify_limiter = RateLimiter(10)

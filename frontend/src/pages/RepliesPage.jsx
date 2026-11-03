@@ -6,11 +6,23 @@ import Modal from "../components/Modal";
 import { Alert, Badge, btnCls, card, cx, h2, input, page } from "../components/ui";
 import { daysAgo, replyLabel } from "./SentPage";
 
-// Partners' replies to our emails, read from the sending mailbox by the backend (inbox.py).
+// Mail from partners, read from the sending mailbox by the backend (inbox.py), in two lists:
+//   replies       - answers to our emails and follow-ups (also automatic replies and bounce notices)
+//   partner_mail  - other mail from a partner's address that doesn't answer any of our emails
 // New = not opened by you yet (each person has their own); the sidebar shows how many.
-// summary: { unread, total, inbox, reply_to } from App, which checks it regularly; onChange(summary)
-// tells App when reading changes the count.
-export default function RepliesPage({ summary, onChange, isAdmin }) {
+// summary: { unread, unread_replies, unread_partner_mail, total_replies, total_partner_mail, inbox, reply_to }
+// from App, which checks it regularly; onChange(summary) tells App when reading changes the counts.
+const CATEGORIES = [
+  { id: "replies", label: "Replies to our emails", empty: "No replies from partners yet." },
+  { id: "partner_mail", label: "Other mail from partners", empty: "No other mail from partners yet." },
+];
+const KIND_BADGE = {
+  auto_reply: { color: "gray", text: "Automatic reply", title: "Out of office or similar: doesn't count as a reply" },
+  bounce: { color: "red", text: "Delivery failure", title: "The partner's mail server could not deliver our email" },
+};
+
+export default function RepliesPage({ summary, onChange, isAdmin, onOpenSettings }) {
+  const [category, setCategory] = useState("replies");
   const [replies, setReplies] = useState([]);
   const [partners, setPartners] = useState([]);
   const [show, setShow] = useState("all");
@@ -25,15 +37,15 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
   function load(search = q) {
     setLoading(true);
     setError("");
-    api.listReplies({ show, q: search.trim(), partner_id: partnerId })
+    api.listReplies({ category, show, q: search.trim(), partner_id: partnerId })
       .then(setReplies)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }
 
   useEffect(() => { api.listPartners().then(setPartners).catch(() => {}); }, []);
-  // filters apply at once, typing waits until you pause, and new replies found by the backend show up
-  useEffect(() => { load(); }, [show, partnerId, summary?.total]);
+  // filters apply at once, typing waits until you pause, and new mail found by the backend shows up
+  useEffect(() => { load(); }, [category, show, partnerId, summary?.total]);
   const typed = useRef(false);
   useEffect(() => {
     if (!typed.current) { typed.current = true; return; }
@@ -47,7 +59,7 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
     setMessage(null);
     try {
       onChange(await api.markAllRepliesRead());
-      setReplies((list) => (show === "unread" ? [] : list.map((r) => ({ ...r, is_read: true }))));
+      load();
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     }
@@ -59,9 +71,13 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
     try {
       const { result, summary: next } = await api.checkInboxNow();
       onChange(next);
-      setMessage(result.found
-        ? { type: "success", text: `${result.found} new ${result.found === 1 ? "reply" : "replies"} found.` }
-        : { type: "info", text: "No new replies from partners." });
+      const parts = [
+        result.replies && `${result.replies} ${result.replies === 1 ? "reply" : "replies"}`,
+        result.partner_mail && `${result.partner_mail} other ${result.partner_mail === 1 ? "message" : "messages"}`,
+      ].filter(Boolean);
+      setMessage(parts.length
+        ? { type: "success", text: `New from partners: ${parts.join(" and ")}.` }
+        : { type: "info", text: "Nothing new from partners." });
       if (!result.found) load();
     } catch (e) {
       setMessage({ type: "error", text: e.message });
@@ -71,24 +87,29 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
   }
 
   const inbox = summary?.inbox;
-  const unread = summary?.unread ?? 0;
+  const counts = {
+    replies: { total: summary?.total_replies ?? 0, unread: summary?.unread_replies ?? 0 },
+    partner_mail: { total: summary?.total_partner_mail ?? 0, unread: summary?.unread_partner_mail ?? 0 },
+  };
+  const current = counts[category];
   const filtered = q.trim() || partnerId;
-  // Replies go to MAIL_FROM (Reply-To): if IMAP_USER reads another mailbox, they are never seen here
-  const replyToElsewhere = inbox?.enabled && summary.reply_to && summary.reply_to.toLowerCase() !== inbox.mailbox.toLowerCase();
+  // Replies go to MAIL_FROM (Reply-To): if another mailbox is read, they are never seen here
+  const replyToElsewhere = inbox?.enabled && inbox.mailbox && summary.reply_to
+    && summary.reply_to.toLowerCase() !== inbox.mailbox.toLowerCase();
 
   return (
     <div className={page}>
       <section className={card}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-[1_1_320px]">
-            <h2 className={h2}>Partner replies ({summary?.total ?? replies.length})</h2>
+            <h2 className={h2}>Mail from partners</h2>
             <p className="text-xs text-muted">
-              Replies from partners to the emails and follow-ups we sent. Only replies to our emails are read from the
-              mailbox: other mail is never opened. A reply also sets the email's status to “Reply received”.
+              Read from the sending mailbox. Only mail from partners' addresses is taken in: other mail is never opened.
+              A reply to one of our emails sets its status to “Reply received”; automatic replies and delivery failures don't.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {unread > 0 && <button className={btnCls()} onClick={markAllRead}>Mark all as read</button>}
+            {(summary?.unread ?? 0) > 0 && <button className={btnCls()} onClick={markAllRead}>Mark all as read</button>}
             {isAdmin && inbox?.enabled && (
               <button className={btnCls("primary")} onClick={checkNow} disabled={checking}>
                 {checking ? "Checking..." : "Check mailbox now"}
@@ -97,29 +118,45 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
           </div>
         </div>
 
-        <MailboxStatus inbox={inbox} />
+        <MailboxStatus inbox={inbox} isAdmin={isAdmin} onOpenSettings={onOpenSettings} />
         {replyToElsewhere && (
           <Alert type="warning">
-            Partners' replies go to the sender <b>{summary.reply_to}</b> (MAIL_FROM), but replies are read from{" "}
-            <b>{inbox.mailbox}</b>. Make IMAP_USER / IMAP_PASSWORD in backend/.env that same mailbox (or remove them).
+            Partners' replies go to the sender <b>{summary.reply_to}</b>, but <b>{inbox.mailbox}</b> is read. Make the inbox
+            user the same mailbox in System Settings (or leave it empty).
           </Alert>
         )}
 
+        <div className="mt-3.5 flex flex-wrap gap-1 border-b border-line" role="tablist" aria-label="Kind of mail">
+          {CATEGORIES.map((c) => (
+            <button key={c.id} type="button" role="tab" aria-selected={category === c.id}
+              onClick={() => { setCategory(c.id); setOpenId(null); }}
+              className={cx("-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2 text-[13px] font-semibold",
+                category === c.id ? "border-brand text-brand" : "border-transparent text-muted hover:text-ink")}>
+              {c.label}
+              <span className="text-xs font-normal text-muted">{counts[c.id].total}</span>
+              {counts[c.id].unread > 0 && (
+                <span className="min-w-[20px] rounded-full bg-brand px-1.5 text-center text-[11px] font-bold leading-5 text-white"
+                  aria-label={`${counts[c.id].unread} new`}>{counts[c.id].unread}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
         <div className="mb-1 mt-3.5 flex flex-wrap gap-2" role="tablist" aria-label="Show">
-          {[{ id: "all", label: "All", count: summary?.total }, { id: "unread", label: "New", count: unread }].map((c) => (
+          {[{ id: "all", label: "All", count: current.total }, { id: "unread", label: "New", count: current.unread }].map((c) => (
             <button key={c.id} role="tab" aria-selected={show === c.id} onClick={() => setShow(c.id)}
               className={cx("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold transition-colors",
                 show === c.id ? "border-ink bg-ink text-white" : "border-line bg-white text-ink hover:border-gray-400")}>
               {c.label}
               <span className={cx("rounded-full px-2 py-px text-xs",
-                show === c.id ? "bg-white/70 text-ink" : c.id === "unread" && c.count ? "bg-brand text-white" : "bg-gray-100")}>{c.count ?? 0}</span>
+                show === c.id ? "bg-white/70 text-ink" : c.id === "unread" && c.count ? "bg-brand text-white" : "bg-gray-100")}>{c.count}</span>
             </button>
           ))}
         </div>
 
         <div className="my-3 flex flex-wrap items-center gap-2">
           <input type="search" className={cx(input, "min-w-0 flex-[1_1_260px]")} value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Search partner, sender, subject or text…" aria-label="Search replies" />
+            placeholder="Search partner, sender, subject or text…" aria-label="Search partner mail" />
           <select className={cx(input, "w-auto max-[640px]:w-full")} value={partnerId} onChange={(e) => setPartnerId(e.target.value)} aria-label="Filter by partner">
             <option value="">All partners</option>
             {[...partners].sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -131,7 +168,8 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
         {error && <Alert type="error">{error}</Alert>}
         {!replies.length && !error && !loading && (
           <p className="py-6 text-center text-muted">
-            {filtered ? "No replies match these filters." : show === "unread" ? "No new replies. You're all caught up." : "No replies from partners yet."}
+            {filtered ? "Nothing matches these filters." : show === "unread" ? "Nothing new. You're all caught up."
+              : CATEGORIES.find((c) => c.id === category).empty}
           </p>
         )}
 
@@ -147,7 +185,8 @@ export default function RepliesPage({ summary, onChange, isAdmin }) {
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className={cx("text-sm", r.is_read ? "font-semibold" : "font-bold")}>{r.partner_name}</span>
-                      <MailTypeBadge type={r.mail_type} />
+                      {r.mail_type && <MailTypeBadge type={r.mail_type} />}
+                      {KIND_BADGE[r.kind] && <Badge color={KIND_BADGE[r.kind].color} title={KIND_BADGE[r.kind].title}>{KIND_BADGE[r.kind].text}</Badge>}
                       <span className="min-w-0 truncate text-xs text-muted">{r.from_name ? `${r.from_name} <${r.from_email}>` : r.from_email}</span>
                     </span>
                     <span className={cx("mt-0.5 block truncate text-[13px]", !r.is_read && "font-semibold")}>{r.subject}</span>
@@ -183,13 +222,16 @@ function shortDate(iso) {
   return d.toLocaleDateString();
 }
 
-function MailboxStatus({ inbox }) {
+function MailboxStatus({ inbox, isAdmin, onOpenSettings }) {
   if (!inbox) return null;
   if (!inbox.enabled) {
+    const reason = !inbox.configured ? "no mailbox is set up" : "reading is switched off";
     return (
       <Alert type="warning">
-        Replies are not being read: no mailbox is set up. Set IMAP_HOST (e.g. imap.gmail.com) in backend/.env and restart
-        the backend. It signs in with SMTP_USER / SMTP_PASSWORD unless IMAP_USER / IMAP_PASSWORD are set.
+        Partner mail is not being read: {reason}.{" "}
+        {isAdmin && onOpenSettings
+          ? <button type="button" className="font-semibold underline" onClick={onOpenSettings}>Open System Settings</button>
+          : "An admin can change this in System Settings."}
       </Alert>
     );
   }
@@ -209,7 +251,7 @@ function MailboxStatus({ inbox }) {
   );
 }
 
-// One reply: its text, attachments and the email it answers. Opening it marks it as read.
+// One message: its text, attachments, and the email it answers (if any). Opening it marks it as read.
 function ReplyModal({ id, onClose, onRead }) {
   const [reply, setReply] = useState(null);
   const [error, setError] = useState("");
@@ -217,7 +259,7 @@ function ReplyModal({ id, onClose, onRead }) {
 
   useEffect(() => {
     api.getReply(id)
-      .then((r) => { setReply(r); onRead(true); return api.replySummary(); })
+      .then((r) => { setReply(r); return api.replySummary(); })
       .then((next) => onRead(true, next))
       .catch((e) => setError(e.message));
   }, [id]);
@@ -244,7 +286,7 @@ function ReplyModal({ id, onClose, onRead }) {
 
   const o = reply?.original;
   return (
-    <Modal wide title={reply ? reply.subject : "Reply"} onClose={onClose}
+    <Modal wide title={reply ? reply.subject : "Message"} onClose={onClose}
       actions={<>
         {reply && <button className={btnCls()} onClick={markNew} disabled={busy}>Mark as new</button>}
         <button className={btnCls("primary")} onClick={onClose}>Close</button>
@@ -253,6 +295,13 @@ function ReplyModal({ id, onClose, onRead }) {
       {!reply && !error && <p className="text-muted">Loading...</p>}
       {reply && (
         <div className="flex flex-col gap-3">
+          {KIND_BADGE[reply.kind] && (
+            <Alert type={reply.kind === "bounce" ? "error" : "info"} className="m-0">
+              {reply.kind === "bounce"
+                ? "Delivery failure: the partner's mail server could not deliver our email. Any address it names is flagged as refused on the Partners page."
+                : "Automatic reply (out of office or similar). It doesn't change the email's reply status."}
+            </Alert>
+          )}
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[13px] [&_dd]:min-w-0 [&_dd]:break-words [&_dt]:text-muted">
             <dt>From</dt><dd><b>{reply.from_name || reply.from_email}</b>{reply.from_name && <span className="text-muted"> &lt;{reply.from_email}&gt;</span>}</dd>
             <dt>To</dt><dd>{reply.to.join(", ") || "—"}</dd>
@@ -260,25 +309,32 @@ function ReplyModal({ id, onClose, onRead }) {
             <dt>Received</dt><dd>{formatDateTime(reply.received_at)} <span className="text-muted">({daysAgo(reply.received_at)})</span></dd>
           </dl>
 
-          <div className="rounded-md border border-line bg-gray-50 px-3 py-2 text-xs">
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-muted">In reply to our email to</span>
-              <b className="text-[13px]">{reply.partner_name}</b>
-              <MailTypeBadge type={reply.mail_type} />
-              <Badge color={o.reply_status === "reconciled" ? "green" : o.reply_status === "received" ? "blue" : "gray"}>
-                {replyLabel(o.reply_status)}
-              </Badge>
-            </div>
-            <div className="break-words">“{o.subject}”</div>
-            <div className="text-muted">
-              Sent {formatDateTime(o.sent_at)} to {o.to.join(", ")} · {o.txn_count} transactions · BDT {formatAmount(o.total_amount)} · file #{o.upload_id}
-            </div>
-            {reply.matched_by === "subject" && (
-              <div className="mt-1 text-amber-800">
-                Matched by its subject and sender (the reply did not say which email it answers): check it is about this email.
+          {o ? (
+            <div className="rounded-md border border-line bg-gray-50 px-3 py-2 text-xs">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-muted">In reply to our email to</span>
+                <b className="text-[13px]">{reply.partner_name}</b>
+                <MailTypeBadge type={reply.mail_type} />
+                <Badge color={o.reply_status === "reconciled" ? "green" : o.reply_status === "received" ? "blue" : "gray"}>
+                  {replyLabel(o.reply_status)}
+                </Badge>
               </div>
-            )}
-          </div>
+              <div className="break-words">“{o.subject}”</div>
+              <div className="text-muted">
+                Sent {formatDateTime(o.sent_at)} to {o.to.join(", ")} · {o.txn_count} transactions · BDT {formatAmount(o.total_amount)} · file #{o.upload_id}
+              </div>
+              {reply.matched_by === "subject" && (
+                <div className="mt-1 text-amber-800">
+                  Matched by its subject and sender (the reply did not say which email it answers): check it is about this email.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-md border border-line bg-gray-50 px-3 py-2 text-xs">
+              <span className="font-semibold text-muted">From partner</span> <b className="text-[13px]">{reply.partner_name}</b>
+              <div className="text-muted">Not a reply to one of our emails: a new message from the partner's address.</div>
+            </div>
+          )}
 
           <EmailView className="max-h-[50vh] min-h-[160px]" html={reply.body_html} />
 

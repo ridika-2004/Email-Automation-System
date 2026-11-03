@@ -287,7 +287,9 @@ class EmailEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     dispatch_id: Mapped[int] = mapped_column(ForeignKey("email_dispatches.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(20))           # status / followup / note / remarks
+    # submitted / sent / send_failed / status / followup / note / remarks /
+    # reply / auto_reply / bounce (a message from the partner, see reply_id)
+    kind: Mapped[str] = mapped_column(String(20))
     reply_status: Mapped[str | None] = mapped_column(String(20), nullable=True)  # kind "status": the new status
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # kind "followup": the email as sent
@@ -306,12 +308,17 @@ class EmailEvent(Base):
 
 
 class EmailReply(Base):
-    """A partner's reply to one of our emails (or follow-ups), read from the sending mailbox (inbox.py).
-    Only replies to our emails are stored: other mail in the mailbox is never downloaded."""
+    """A message from a partner, read from the sending mailbox (inbox.py). Either an answer to one of
+    our emails or follow-ups (dispatch_id set; kind reply, auto_reply or bounce), or other mail from a
+    partner's address (no dispatch_id; kind partner_mail, or auto_reply). Other mail in the mailbox is
+    never downloaded."""
     __tablename__ = "email_replies"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    dispatch_id: Mapped[int] = mapped_column(ForeignKey("email_dispatches.id", ondelete="CASCADE"), index=True)
+    dispatch_id: Mapped[int | None] = mapped_column(ForeignKey("email_dispatches.id", ondelete="CASCADE"),
+                                                    nullable=True, index=True)
+    partner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="reply")  # reply / auto_reply / bounce / partner_mail
     message_id: Mapped[str] = mapped_column(String(255), unique=True)   # the reply's own Message-ID
     from_email: Mapped[str] = mapped_column(String(254))
     from_name: Mapped[str] = mapped_column(String(200), default="")
@@ -320,11 +327,11 @@ class EmailReply(Base):
     subject: Mapped[str] = mapped_column(String(500))
     body_html: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"))
     snippet: Mapped[str] = mapped_column(String(300), default="")       # start of the text, for the list
-    matched_by: Mapped[str] = mapped_column(String(20))                 # thread (reply headers) / subject
+    matched_by: Mapped[str] = mapped_column(String(20))                 # thread (reply headers) / subject / sender
     received_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     found_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
-    dispatch: Mapped[EmailDispatch] = relationship()
+    dispatch: Mapped[EmailDispatch | None] = relationship()
     attachments: Mapped[list["EmailReplyAttachment"]] = relationship(
         cascade="all, delete-orphan", order_by="EmailReplyAttachment.id")
 

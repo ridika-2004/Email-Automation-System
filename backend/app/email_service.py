@@ -262,6 +262,41 @@ def send_email(to: list[str], cc: list[str], subject: str, html_body: str, in_re
         except Exception as exc:  # connection problems etc. -> try again
             last_error = exc
             if attempt < config.SMTP_MAX_ATTEMPTS:
-                time.sleep(2)
+                time.sleep(config.SMTP_RETRY_SECONDS)
 
-    raise RuntimeError(f"Failed after {config.SMTP_MAX_ATTEMPTS} attempt(s): {last_error}")
+    raise RuntimeError(f"Failed after {config.SMTP_MAX_ATTEMPTS} attempt(s): {last_error}{sign_in_hint(last_error)}")
+
+
+def sign_in_hint(exc) -> str:
+    """Gmail closes the connection (or answers 535) when the app password is wrong or was revoked."""
+    if isinstance(exc, (smtplib.SMTPAuthenticationError, smtplib.SMTPServerDisconnected)):
+        return (". The mail server refused the sign-in: check the user and password on the System Settings "
+                "page (for Gmail, create a new app password).")
+    return ""
+
+
+def test_smtp(host: str, port: int, use_tls: bool, user: str, password: str) -> None:
+    """Connect and sign in to a mail server without sending anything. Raises with a readable message."""
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as smtp:
+            smtp.ehlo()
+            if use_tls:
+                smtp.starttls()
+                smtp.ehlo()
+            if user:
+                try:
+                    smtp.login(user, password)
+                except smtplib.SMTPAuthenticationError as exc:
+                    raise RuntimeError(f"The mail server refused the sign-in for {user}: {_reason(exc.smtp_code, exc.smtp_error)}")
+                except smtplib.SMTPServerDisconnected:
+                    raise RuntimeError(f"The mail server closed the connection while signing in {user}: the password "
+                                       "was most likely refused (for Gmail, create a new app password).")
+                except smtplib.SMTPNotSupportedError:
+                    raise RuntimeError("The mail server doesn't accept a sign-in on this connection: "
+                                       "turn on STARTTLS or check the port.")
+    except RuntimeError:
+        raise
+    except smtplib.SMTPException as exc:
+        raise RuntimeError(f"The mail server {host}:{port} answered with an error: {exc}")
+    except (OSError, TimeoutError) as exc:
+        raise RuntimeError(f"Could not reach the mail server {host}:{port}: {exc}")

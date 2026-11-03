@@ -216,7 +216,7 @@ export const api = {
 
   // partners' replies, read from the sending mailbox. Summary: { unread, total, inbox, reply_to (= MAIL_FROM) }
   replySummary: () => request("/api/replies/summary"),
-  // filters: { show: "all" | "unread", q, partner_id }
+  // filters: { category: "replies" | "partner_mail", show: "all" | "unread", q, partner_id }
   listReplies: (filters = {}) => request(`/api/replies?${queryString(filters)}`),
   getReply: (id) => request(`/api/replies/${id}`), // also marks it as read
   setReplyRead: (id, read) => request(`/api/replies/${id}/read`, json("PUT", { read })),
@@ -225,6 +225,14 @@ export const api = {
     download(`/api/replies/${replyId}/attachments/${attachment.id}`, attachment.filename),
   // admins only
   checkInboxNow: () => request("/api/replies/check-now", { method: "POST" }),
+
+  // System Settings (admins only). values: only the changed settings; reset: names back to .env;
+  // force: save even when the connection test fails (409 with code "test_failed" otherwise)
+  serverSettings: () => request("/api/server-settings"),
+  saveServerSettings: (values, reset = [], force = false) =>
+    request("/api/server-settings", json("PUT", { values, reset, force })),
+  // target: "smtp" | "imap"; values: unsaved settings to test with. Nothing is sent or saved.
+  testServerSettings: (target, values) => request("/api/server-settings/test", json("POST", { target, values })),
 };
 
 export const formatAmount = (n) =>

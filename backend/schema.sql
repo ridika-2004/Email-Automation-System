@@ -205,7 +205,8 @@ CREATE TABLE email_dispatches (
 CREATE TABLE email_events (   -- follow-up history: status changes, follow-up emails, notes
   id           INT AUTO_INCREMENT PRIMARY KEY,
   dispatch_id  INT          NOT NULL,
-  kind         VARCHAR(20)  NOT NULL,          -- status / followup / note / remarks / reply
+  kind         VARCHAR(20)  NOT NULL,          -- submitted / sent / send_failed / status / followup / note / remarks /
+                                               -- reply / auto_reply / bounce (a partner message, see reply_id)
   reply_status VARCHAR(20)  NULL,
   note         TEXT         NULL,
   subject      VARCHAR(300) NULL,
@@ -222,9 +223,11 @@ CREATE TABLE email_events (   -- follow-up history: status changes, follow-up em
   FOREIGN KEY (dispatch_id) REFERENCES email_dispatches(id) ON DELETE CASCADE
 );
 
-CREATE TABLE email_replies (   -- partners' replies, read from the sending mailbox (only replies to our emails)
+CREATE TABLE email_replies (   -- partner messages read from the sending mailbox: replies to our emails and other partner mail
   id          INT AUTO_INCREMENT PRIMARY KEY,
-  dispatch_id INT          NOT NULL,           -- the email it answers
+  dispatch_id INT          NULL,               -- the email it answers (empty: other mail from the partner)
+  partner_id  INT          NULL,               -- the partner it came from
+  kind        VARCHAR(20)  NOT NULL DEFAULT 'reply',  -- reply / auto_reply / bounce / partner_mail
   message_id  VARCHAR(255) NOT NULL UNIQUE,    -- the reply's own Message-ID (never stored twice)
   from_email  VARCHAR(254) NOT NULL,
   from_name   VARCHAR(200) NOT NULL DEFAULT '',
@@ -233,10 +236,11 @@ CREATE TABLE email_replies (   -- partners' replies, read from the sending mailb
   subject     VARCHAR(500) NOT NULL,
   body_html   MEDIUMTEXT   NOT NULL,
   snippet     VARCHAR(300) NOT NULL DEFAULT '',
-  matched_by  VARCHAR(20)  NOT NULL,           -- thread (reply headers) / subject
+  matched_by  VARCHAR(20)  NOT NULL,           -- thread (reply headers) / subject / sender
   received_at DATETIME     NOT NULL,
   found_at    DATETIME     NOT NULL,
   INDEX (dispatch_id),
+  INDEX (partner_id),
   INDEX (received_at),
   FOREIGN KEY (dispatch_id) REFERENCES email_dispatches(id) ON DELETE CASCADE
 );
@@ -269,7 +273,8 @@ CREATE TABLE inbox_state (   -- how far the mailbox has been read (IMAP UIDs)
 );
 
 CREATE TABLE app_settings (   -- Email Configuration page: one row per changed setting (others use the .env default)
-  `key`      VARCHAR(50) PRIMARY KEY,         -- followup_due_days / auto_followup_enabled / auto_followup_max / cc_emails
+  `key`      VARCHAR(50) PRIMARY KEY,         -- followup_due_days / auto_followup_enabled / auto_followup_max / cc_emails,
+                                              -- and server.<NAME> for System Settings (passwords encrypted)
   value      TEXT        NOT NULL,            -- JSON
   updated_by VARCHAR(30) NULL,
   updated_at DATETIME    NOT NULL
